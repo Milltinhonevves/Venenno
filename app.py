@@ -146,16 +146,33 @@ def pitch_shift_melhor(y, sr, n_steps):
     return result.astype(np.float32)
 
 
+def pitch_shift_scipy(y, sr, n_steps):
+    """
+    Pitch shift ultra-leve usando apenas scipy.signal.resample.
+    Nao usa librosa.effects.pitch_shift — zero overhead de memoria.
+    n_steps: semitons (positivo = mais agudo, negativo = mais grave)
+    """
+    if abs(n_steps) < 0.05:
+        return y
+    fator = 2.0 ** (n_steps / 12.0)
+    # Resample para simular pitch: estica/comprime o audio
+    n_orig  = len(y)
+    n_novo  = int(round(n_orig / fator))
+    y_novo  = scipy_resample(y, n_novo)
+    # Volta para o tamanho original (mantém duração)
+    y_final = scipy_resample(y_novo, n_orig)
+    return y_final.astype(np.float32)
+
+
 def autotune_frame_a_frame(y, sr, tonica, escala, strength=0.8):
     """
-    Autotune ultra-leve: detecta pitch medio com yin (rapido),
-    calcula quantos semitons deslocar e aplica UM pitch_shift no audio todo.
-    Minimo de memoria, maximo de compatibilidade com Railway.
+    Autotune ultra-leve: yin rapido + pitch_shift via scipy resample.
+    Sem librosa.effects.pitch_shift — funciona dentro do limite de memoria do Railway.
     """
     escala_midi = gerar_escala(tonica, escala)
 
-    # Usa apenas os primeiros 10s pra detectar pitch (rapido)
-    amostra = y[:sr * 10] if len(y) > sr * 10 else y
+    # Amostra de no maximo 5s para deteccao rapida
+    amostra = y[:sr * 5] if len(y) > sr * 5 else y
 
     try:
         f0 = librosa.yin(
@@ -180,18 +197,14 @@ def autotune_frame_a_frame(y, sr, tonica, escala, strength=0.8):
     m_atual = freq_para_midi(pitch)
     m_alvo  = nota_mais_proxima(m_atual, escala_midi)
     n_steps = (m_alvo - m_atual) * strength
-    print(f'[autotune] pitch={pitch:.1f}Hz midi={m_atual:.1f} alvo={m_alvo:.1f} steps={n_steps:.3f}')
+    print(f'[autotune] pitch={pitch:.1f}Hz steps={n_steps:.3f}')
 
     if abs(n_steps) < 0.05:
-        print('[autotune] ja afinado, sem ajuste')
+        print('[autotune] ja afinado')
         return y
 
-    try:
-        resultado = librosa.effects.pitch_shift(y=y, sr=sr, n_steps=float(n_steps))
-        return resultado.astype(np.float32)
-    except Exception as e:
-        print(f'[autotune] pitch_shift erro: {e}')
-        return y
+    return pitch_shift_scipy(y, sr, n_steps)
+
 
 def index():
     return render_template('index.html')
