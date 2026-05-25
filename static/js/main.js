@@ -142,6 +142,7 @@ if (btnReusar) btnReusar.addEventListener('click', () => {
     arquivoAtual = new File([blobGravado], arquivoAtual.name, { type: arquivoAtual.type });
     btnReusar.hidden = true;
     document.getElementById('btn-processar').disabled = false;
+  document.getElementById('btnPreview').disabled = false;
     setStatus('✅ Pronto para processar de novo!', '#00ff88');
   }
 });
