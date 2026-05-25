@@ -31,101 +31,93 @@ def converter_wav(origem):
         capture_output=True, timeout=300
     )
     if r.returncode != 0:
-        raise RuntimeError('ffmpeg erro: ' + r.stderr.decode(errors='replace')[-300:])
+        raise RuntimeError('ffmpeg: ' + r.stderr.decode(errors='replace')[-300:])
     return dest
 
 def gerar_escala(tonica, escala):
     idx = NOTAS.index(tonica)
     ivs = ESCALAS.get(escala, ESCALAS['cromatica'])
-    return [(o+1)*12 + idx + iv for o in range(-1,9) for iv in ivs]
+    return [(o+1)*12 + idx + iv for o in range(-1, 9) for iv in ivs]
 
-def nota_mais_proxima(midi, escala_midi):
-    arr = np.array(escala_midi)
-    return escala_midi[int(np.argmin(np.abs(arr - midi)))]
+def freq_para_midi(freq):
+    return 69 + 12 * np.log2(freq / 440.0)
 
-def autotune_preciso(y, sr, tonica, escala, strength):
+def midi_para_freq(midi):
+    return 440.0 * (2 ** ((midi - 69) / 12.0))
+
+def nota_mais_proxima(midi_val, escala_midi):
+    arr = np.array(escala_midi, dtype=float)
+    return escala_midi[int(np.argmin(np.abs(arr - midi_val)))]
+
+def autotune_chunk(chunk, sr, escala_midi, strength):
     """
-    Autotune nota-a-nota: detecta pitch frame a frame e corrige cada trecho
+    Divide o chunk em janelas de 0.1s e aplica pitch shift preciso em cada uma.
     """
     hop = 256
-    frame = 1024
-    escala_midi = gerar_escala(tonica, escala)
+    frame_len = 2048
+    janela_s = 0.1  # 100ms por janela
+    janela_samples = int(janela_s * sr)
 
-    # Detecta pitch frame a frame
-    f0 = librosa.yin(y,
+    resultado = np.zeros_like(chunk, dtype=np.float32)
+    contagem  = np.zeros_like(chunk, dtype=np.float32)
+
+    f0 = librosa.yin(chunk,
         fmin=float(librosa.note_to_hz('C2')),
         fmax=float(librosa.note_to_hz('C7')),
-        sr=sr, frame_length=frame, hop_length=hop)
+        sr=sr, frame_length=frame_len, hop_length=hop)
 
-    # Agrupa frames em segmentos de pitch similar
-    resultado = np.copy(y).astype(np.float32)
-    i = 0
-    while i < len(f0):
-        freq = f0[i]
-        # Pula frames sem voz
-        if freq < 80 or freq > 1000 or np.isnan(freq):
-            i += 1
-            continue
+    for inicio in range(0, len(chunk) - janela_samples, janela_samples // 2):
+        fim = inicio + janela_samples
+        trecho = chunk[inicio:fim]
 
-        # Encontra até onde esse pitch continua (janela de 10 frames)
-        j = i + 1
-        while j < len(f0) and j < i + 40:
-            if f0[j] < 80 or f0[j] > 1000 or np.isnan(f0[j]):
-                break
-            if abs(f0[j] - freq) > freq * 0.15:  # mudou de nota
-                break
-            j += 1
+        # Pega frames correspondentes a essa janela
+        f_ini = inicio // hop
+        f_fim = fim // hop
+        f0_trecho = f0[f_ini:f_fim]
+        validos = f0_trecho[(f0_trecho > 80) & (f0_trecho < 1100) & ~np.isnan(f0_trecho)]
 
-        # Calcula pitch médio do segmento
-        segmento_f0 = f0[i:j]
-        validos = segmento_f0[(segmento_f0 > 80) & ~np.isnan(segmento_f0)]
         if len(validos) == 0:
-            i = j
+            resultado[inicio:fim] += trecho
+            contagem[inicio:fim]  += 1
             continue
 
-        pitch_seg = float(np.median(validos))
-        midi_atual = 69 + 12 * np.log2(pitch_seg / 440.0)
+        pitch = float(np.median(validos))
+        midi_atual = freq_para_midi(pitch)
         midi_alvo  = nota_mais_proxima(midi_atual, escala_midi)
         n_steps    = (midi_alvo - midi_atual) * strength
 
-        if abs(n_steps) > 0.1:
-            inicio_s = i * hop
-            fim_s    = min(j * hop + frame, len(y))
-            trecho   = y[inicio_s:fim_s]
+        if abs(n_steps) > 0.02:
+            try:
+                trecho_afinado = librosa.effects.pitch_shift(
+                    trecho.astype(np.float32), sr=sr,
+                    n_steps=n_steps, bins_per_octave=48)
+                resultado[inicio:fim] += trecho_afinado
+            except:
+                resultado[inicio:fim] += trecho
+        else:
+            resultado[inicio:fim] += trecho
 
-            if len(trecho) > frame:
-                try:
-                    trecho_afinado = librosa.effects.pitch_shift(
-                        trecho, sr=sr, n_steps=n_steps, bins_per_octave=48)
-                    # Crossfade suave nas bordas
-                    fade = min(512, len(trecho) // 4)
-                    if fade > 0:
-                        ramp = np.linspace(0, 1, fade)
-                        trecho_afinado[:fade]  *= ramp
-                        trecho_afinado[-fade:] *= ramp[::-1]
-                        resultado[inicio_s:inicio_s+fade] *= (1 - ramp)
-                        resultado[fim_s-fade:fim_s]       *= (1 - ramp[::-1])
-                    resultado[inicio_s:fim_s] += trecho_afinado
-                except Exception as ex:
-                    print(f'[pitch_shift erro] {ex}')
-        i = j
+        contagem[inicio:fim] += 1
 
+    # Normaliza overlap
+    mask = contagem > 0
+    resultado[mask] /= contagem[mask]
     return resultado
 
 def processar_em_chunks(y, sr, tonica, escala, strength):
-    chunk_size = 30 * sr
-    resultado = []
+    chunk_size  = 30 * sr
+    escala_midi = gerar_escala(tonica, escala)
+    resultado   = []
     total = (len(y) + chunk_size - 1) // chunk_size
 
     for i, inicio in enumerate(range(0, len(y), chunk_size)):
-        chunk = y[inicio:inicio + chunk_size]
+        chunk = y[inicio:inicio + chunk_size].astype(np.float32)
         print(f'[chunk {i+1}/{total}] {len(chunk)/sr:.1f}s')
         if len(chunk) < sr:
             resultado.append(chunk)
             continue
         try:
-            chunk_afinado = autotune_preciso(chunk, sr, tonica, escala, strength)
-            resultado.append(chunk_afinado)
+            resultado.append(autotune_chunk(chunk, sr, escala_midi, strength))
         except Exception as ex:
             print(f'[chunk erro] {ex}')
             resultado.append(chunk)
@@ -134,7 +126,7 @@ def processar_em_chunks(y, sr, tonica, escala, strength):
 
 def aplicar_ganho(y, db=2.0):
     fator = 10 ** (db / 20.0)
-    return np.clip(y * fator, -1.0, 1.0)
+    return np.clip(y * fator, -1.0, 1.0).astype(np.float32)
 
 @app.route('/')
 def index():
@@ -147,7 +139,7 @@ def processar():
 
     arq      = request.files['audio']
     tonica   = request.form.get('tonica',   'C')
-    escala   = request.form.get('escala',   'cromatica')
+    escala   = request.form.get('escala',   'maior')
     strength = float(request.form.get('strength', 0.8))
 
     uid  = str(uuid.uuid4())
@@ -156,14 +148,12 @@ def processar():
 
     try:
         arq.save(orig)
-        tam = os.path.getsize(orig)
-        if tam == 0:
+        if os.path.getsize(orig) == 0:
             return jsonify({'erro': 'Arquivo vazio.'}), 400
 
         wav = converter_wav(orig)
         y, sr = librosa.load(wav, sr=22050, mono=True)
-        duracao = len(y) / sr
-        print(f'[proc] duracao={duracao:.1f}s')
+        print(f'[proc] duracao={len(y)/sr:.1f}s strength={strength} escala={escala} tonica={tonica}')
 
         if len(y) == 0:
             return jsonify({'erro': 'Audio sem conteudo.'}), 400
