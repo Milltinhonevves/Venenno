@@ -108,46 +108,48 @@ def nota_mais_proxima(midi, escala_midi):
             candidatos.append(ov * 12 + g)
     return min(candidatos, key=lambda m: abs(m - midi))
 
-def yin_simples(seg):
+def detectar_pitch(seg):
     """
-    YIN compacto e seguro — janela fixa de 2048 amostras, sem divisao por lista.
+    Deteccao de pitch por autocorrelacao — simples, segura, sem bugs de tipo.
+    Retorna frequencia fundamental em Hz ou 0.0 se nao detectar.
     """
+    # Janela de 2048 amostras do centro
     W = 2048
     n = len(seg)
-    if n < 256:
+    if n < 512:
         return 0.0
-
-    # Pega janela do meio
     mid    = n // 2
-    trecho = seg[max(0, mid - W//2): mid + W//2]
+    trecho = np.array(seg[max(0, mid - W//2): mid + W//2], dtype=np.float32)
     n      = len(trecho)
 
-    min_tau = max(4, int(SR / 1200))
-    max_tau = min(n // 2, int(SR / 60))
+    min_tau = max(4, int(SR / 1200))   # max 1200 Hz
+    max_tau = min(n // 2, int(SR / 60)) # min 60 Hz
     if min_tau >= max_tau:
         return 0.0
 
-    # Difference function (loop simples — janela pequena, rapido)
-    diff = np.zeros(max_tau - min_tau, dtype=np.float32)
-    for i, tau in enumerate(range(min_tau, max_tau)):
-        d = trecho[:n - tau] - trecho[tau:]
-        diff[i] = float(np.dot(d, d))
+    # Autocorrelacao normalizada
+    trecho -= trecho.mean()
+    energia = float(np.dot(trecho, trecho))
+    if energia < 1e-6:
+        return 0.0
 
-    # CMND
-    total  = float(diff.sum()) + 1e-10
-    cmnd   = diff / total  # sempre float / float
+    melhor_tau   = 0
+    melhor_corr  = -1.0
+    for tau in range(min_tau, max_tau):
+        corr = float(np.dot(trecho[:n - tau], trecho[tau:])) / energia
+        if corr > melhor_corr:
+            melhor_corr = corr
+            melhor_tau  = tau
 
-    # Primeiro minimo abaixo do threshold
-    threshold = 0.15
-    for i in range(len(cmnd) - 1):
-        if cmnd[i] < threshold and cmnd[i] <= cmnd[i + 1]:
-            tau = min_tau + i
-            return float(SR) / float(tau) if tau > 0 else 0.0
+    if melhor_corr < 0.3 or melhor_tau == 0:
+        return 0.0
 
-    # Fallback
-    best_i = int(np.argmin(cmnd))
-    tau    = min_tau + best_i
-    return float(SR) / float(tau) if tau > 0 else 0.0
+    return float(SR) / float(melhor_tau)
+
+
+# Alias para compatibilidade
+def yin_simples(seg):
+    return detectar_pitch(seg)
 
 
 def pitch_shift_scipy(seg, n_steps):
