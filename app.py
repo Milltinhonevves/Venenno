@@ -3,7 +3,6 @@ import numpy as np
 import librosa
 import soundfile as sf
 from flask import Flask, request, jsonify, render_template, send_from_directory
-from pedalboard import Pedalboard, Chorus, Reverb, Compressor, Gain
 
 app = Flask(__name__)
 app.config['UPLOAD_FOLDER']    = '/tmp/venenno_up'
@@ -69,13 +68,9 @@ def autotune(y, sr, tonica='C', escala='cromatica', strength=1.0, smoothing=0.0)
     except Exception as ex:
         print('pitch_shift erro:', ex); return y
 
-def efeitos(y, sr, reverb=0.0, chorus=False, compressor=True):
-    chain = []
-    if compressor: chain.append(Compressor(threshold_db=-20, ratio=4))
-    if chorus:     chain.append(Chorus())
-    if reverb > 0: chain.append(Reverb(room_size=float(reverb)))
-    chain.append(Gain(gain_db=2))
-    return Pedalboard(chain)(y.astype(np.float32), sr)
+def aplicar_ganho(y, db=2.0):
+    fator = 10 ** (db / 20.0)
+    return np.clip(y * fator, -1.0, 1.0)
 
 @app.route('/')
 def index():
@@ -91,9 +86,6 @@ def processar():
     escala    = request.form.get('escala',    'cromatica')
     strength  = float(request.form.get('strength',  0.5))
     smoothing = float(request.form.get('smoothing', 0.5))
-    reverb    = float(request.form.get('reverb',    0.0))
-    chorus    = request.form.get('chorus',    'false').lower()=='true'
-    comp      = request.form.get('compressor','false').lower()=='true'
 
     uid  = str(uuid.uuid4())
     orig = os.path.join(app.config['UPLOAD_FOLDER'], uid)
@@ -111,11 +103,11 @@ def processar():
         print(f'[proc] samples={len(y)} sr={sr}')
 
         if len(y) == 0:
-            return jsonify({'erro': 'Áudio sem conteúdo após conversão.'}), 400
+            return jsonify({'erro': 'Audio sem conteudo apos conversao.'}), 400
 
         y2 = autotune(y, sr, tonica=tonica, escala=escala,
                       strength=strength, smoothing=smoothing)
-        y3 = efeitos(y2, sr, reverb=reverb, chorus=chorus, compressor=comp)
+        y3 = aplicar_ganho(y2)
 
         nome = f'venenno_{uid}.wav'
         sf.write(os.path.join(app.config['PROCESSED_FOLDER'], nome), y3, sr)
