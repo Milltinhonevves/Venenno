@@ -1,4 +1,3 @@
-import base64
 import os, uuid, subprocess, traceback
 import numpy as np
 import librosa
@@ -156,11 +155,7 @@ def processar():
             print(f'[autotune] pitch={pitch:.1f}Hz steps={n_steps:.3f}')
             y = pitch_shift_melhor(y, sr, n_steps)
 
-        # Normaliza o pico pro máximo e aplica +6dB de ganho
-        pico = np.max(np.abs(y))
-        if pico > 0:
-            y = y / pico  # normaliza pra 0dB
-        fator = 10 ** (6.0 / 20.0)  # +6dB
+        fator = 10 ** (2.0 / 20.0)
         y = np.clip(y * fator, -1.0, 1.0).astype(np.float32)
 
         # Salva WAV temporário e converte pra MP3
@@ -171,9 +166,7 @@ def processar():
         sf.write(wav_out, y, sr)
         wav_para_mp3(wav_out, mp3_out)
 
-        with open(mp3_out, 'rb') as f:
-            audio_b64 = base64.b64encode(f.read()).decode('utf-8')
-        return jsonify({'sucesso': True, 'audio_b64': audio_b64, 'url': f'/download/venenno_{uid}.mp3'})
+        return jsonify({'sucesso': True, 'url': f'/download/venenno_{uid}.mp3'})
 
     except Exception as e:
         print('ERRO:', traceback.format_exc())
