@@ -200,7 +200,7 @@ document.getElementById('btn-processar').addEventListener('click', async (e) => 
       mostrarErro(data.erro || 'Erro desconhecido');
     }
   } catch (err) {
-    mostrarErro('Erro de rede: ' + err.message);
+    mostrarErro('Erro: ' + err.name + ' - ' + err.message + ' | audio=' + (arquivoAtual ? arquivoAtual.size + 'b ' + arquivoAtual.type : 'null'));
   } finally {
     setProcessando(false);
   }
