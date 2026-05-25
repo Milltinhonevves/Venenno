@@ -33,26 +33,33 @@ function mostrarErro(msg) {
   if (res) res.hidden = true;
 }
 
-function mostrarResultado(url) {
+function mostrarResultado(url, audioB64) {
   const el  = document.getElementById('resultado');
   const dl  = document.getElementById('btn-download');
   const err = document.getElementById('erro');
   if (err) err.hidden = true;
   if (el)  el.hidden  = false;
 
-  // Remove player antigo se existir
   const velho = document.getElementById('player');
   if (velho) velho.remove();
 
-  // Cria link grande pra abrir o MP3 direto no app do celular
-  const link = document.createElement('a');
-  link.id = 'player';
-  link.href = url + '?t=' + Date.now();
-  link.target = '_blank';
-  link.rel = 'noopener';
-  link.textContent = '▶️ OUVIR AGORA';
-  link.style.cssText = 'display:block;background:#00ff88;color:#000;font-size:1.3rem;font-weight:bold;text-align:center;padding:18px;border-radius:12px;margin:12px 0;text-decoration:none;';
-  el.insertBefore(link, dl);
+  // Usa base64 pra criar blob URL local — funciona em qualquer browser
+  const audio = document.createElement('audio');
+  audio.id = 'player';
+  audio.controls = true;
+  audio.style.cssText = 'width:100%;margin:12px 0;';
+  if (audioB64) {
+    const bytes = atob(audioB64);
+    const arr = new Uint8Array(bytes.length);
+    for (let i = 0; i < bytes.length; i++) arr[i] = bytes.charCodeAt(i);
+    const blob = new Blob([arr], {type: 'audio/mpeg'});
+    audio.src = URL.createObjectURL(blob);
+  } else {
+    audio.src = url + '?t=' + Date.now();
+  }
+  el.insertBefore(audio, dl);
+  audio.load();
+  audio.play().catch(function(){});
 
   if (dl) { dl.href = url; dl.download = 'venenno.mp3'; }
 
@@ -210,7 +217,7 @@ document.getElementById('btn-processar').addEventListener('click', async functio
       return;
     }
     if (data.sucesso) {
-      mostrarResultado(window.location.origin + data.url);
+      mostrarResultado(window.location.origin + data.url, data.audio_b64);
     } else {
       mostrarErro(data.erro || 'Erro desconhecido');
     }
