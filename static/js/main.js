@@ -51,6 +51,12 @@ function mostrarResultado(url, b64) {
 
   if (player) { player.src = blobUrl; player.load(); player.play().catch(function(){}); }
   if (dl) { dl.href = blobUrl; dl.download = 'venenno.mp3'; }
+  // Mostra botao salvar e guarda b64 para salvar depois
+  const btnSalvar = document.getElementById('btn-salvar');
+  if (btnSalvar) {
+    btnSalvar.hidden = false;
+    btnSalvar.onclick = () => salvarNaBiblioteca(b64);
+  }
 
   const btnReusar = document.getElementById('btn-reusar');
   if (btnReusar && blobGravado) btnReusar.hidden = false;
@@ -297,3 +303,64 @@ document.getElementById('btn-processar').addEventListener('click', async (e) => 
     mostrarErro('Erro: ' + err.message);
   }
 });
+// ==================== BIBLIOTECA ====================
+function carregarBiblioteca() {
+  const lista = JSON.parse(localStorage.getItem('venenno_biblioteca') || '[]');
+  const el = document.getElementById('bib-lista');
+  if (!el) return;
+  if (lista.length === 0) {
+    el.innerHTML = '<p class="bib-vazia">Nenhum áudio salvo ainda.</p>';
+    return;
+  }
+  el.innerHTML = '';
+  lista.forEach((item, idx) => {
+    const card = document.createElement('div');
+    card.className = 'bib-card';
+    card.innerHTML = `
+      <div class="bib-info">
+        <span class="bib-nome">${item.nome}</span>
+        <span class="bib-meta">${item.data} · ${item.tonica} ${item.escala}</span>
+      </div>
+      <div class="bib-acoes">
+        <button class="bib-btn-play" onclick="bibPlayar(${idx})">▶</button>
+        <button class="bib-btn-del" onclick="bibExcluir(${idx})">🗑</button>
+      </div>
+    `;
+    el.appendChild(card);
+  });
+}
+
+function bibPlayar(idx) {
+  const lista = JSON.parse(localStorage.getItem('venenno_biblioteca') || '[]');
+  const item = lista[idx];
+  if (!item) return;
+  mostrarResultado('', item.audio_b64);
+}
+
+function bibExcluir(idx) {
+  if (!confirm('Excluir este áudio da biblioteca?')) return;
+  const lista = JSON.parse(localStorage.getItem('venenno_biblioteca') || '[]');
+  lista.splice(idx, 1);
+  localStorage.setItem('venenno_biblioteca', JSON.stringify(lista));
+  carregarBiblioteca();
+}
+
+function salvarNaBiblioteca(audio_b64) {
+  const lista = JSON.parse(localStorage.getItem('venenno_biblioteca') || '[]');
+  const agora = new Date();
+  const data = agora.toLocaleDateString('pt-BR') + ' ' + agora.toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit'});
+  const tonica = document.getElementById('tonica') ? document.getElementById('tonica').value : '?';
+  const escala = document.getElementById('escala') ? document.getElementById('escala').value : '?';
+  const nome = 'Venenno ' + (lista.length + 1);
+  lista.unshift({ nome, data, tonica, escala, audio_b64 });
+  // Limita a 20 audios
+  if (lista.length > 20) lista.pop();
+  localStorage.setItem('venenno_biblioteca', JSON.stringify(lista));
+  carregarBiblioteca();
+  const btn = document.getElementById('btn-salvar');
+  if (btn) { btn.textContent = '✅ Salvo!'; setTimeout(() => { btn.textContent = '💾 Salvar na Biblioteca'; }, 2000); }
+}
+
+// Carrega biblioteca ao abrir
+document.addEventListener('DOMContentLoaded', carregarBiblioteca);
+// ====================================================
