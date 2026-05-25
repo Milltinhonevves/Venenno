@@ -160,8 +160,22 @@ def processar():
     eq_agudos     = float(request.form.get('eq_agudos', 0.0))
 
     uid = str(uuid.uuid4())
-    orig = os.path.join(app.config['UPLOAD_FOLDER'], uid)
+    # Detecta extensao do arquivo pelo nome ou content-type
+    nome_orig = arq.filename or ''
+    ext_orig  = os.path.splitext(nome_orig)[1].lower()
+    if not ext_orig:
+        ct = (arq.content_type or '').lower()
+        if 'mp3' in ct or 'mpeg' in ct:   ext_orig = '.mp3'
+        elif 'mp4' in ct or 'm4a' in ct:  ext_orig = '.mp4'
+        elif 'ogg' in ct:                 ext_orig = '.ogg'
+        elif 'webm' in ct:                ext_orig = '.webm'
+        elif 'wav' in ct:                 ext_orig = '.wav'
+        elif 'flac' in ct:                ext_orig = '.flac'
+        elif 'aac' in ct:                 ext_orig = '.aac'
+        else:                             ext_orig = '.mp3'  # assume mp3 por padrao
+    orig = os.path.join(app.config['UPLOAD_FOLDER'], uid + ext_orig)
     tmp_files = []
+    print(f'[upload] nome={nome_orig} ct={arq.content_type} ext={ext_orig}')
 
     try:
         arq.save(orig); tmp_files.append(orig)
