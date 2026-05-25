@@ -197,123 +197,42 @@ def processar():
 
         y = aplicar_eq(y, sr, eq_graves, eq_medios, eq_agudos)
 
-        f0 = librosa.yin(y,
-            fmin=float(librosa.note_to_hz('C2')),
-            fmax=float(librosa.note_to_hz('C7')),
-            sr=sr, frame_length=1024, hop_length=256)
-        validos = f0[(f0 > 80) & (f0 < 1100) & ~np.isnan(f0)]
+        # Detecta pitch da voz com pyin (mais preciso)
+        try:
+            f0, voiced_flag, _ = librosa.pyin(y,
+                fmin=float(librosa.note_to_hz('C2')),
+                fmax=float(librosa.note_to_hz('C7')),
+                sr=sr, frame_length=2048, hop_length=512)
+            validos = f0[voiced_flag & ~np.isnan(f0) & (f0 > 60) & (f0 < 1200)]
+            print(f'[pyin] frames_validos={len(validos)}')
+        except Exception as ep:
+            print(f'[pyin erro] {ep} — fallback yin')
+            # Detecta pitch da voz com pyin (mais preciso)
+        try:
+            f0, voiced_flag, _ = librosa.pyin(y,
+                fmin=float(librosa.note_to_hz('C2')),
+                fmax=float(librosa.note_to_hz('C7')),
+                sr=sr_a, frame_length=2048, hop_length=512)
+            validos = f0[voiced_flag & ~np.isnan(f0) & (f0 > 60) & (f0 < 1200)]
+            print(f'[pyin] frames_validos={len(validos)}')
+        except Exception as ep:
+            print(f'[pyin erro] {ep} — fallback yin')
+            f0 = librosa.yin(y,
+                fmin=float(librosa.note_to_hz('C2')),
+                fmax=float(librosa.note_to_hz('C7')),
+                sr=sr_a, frame_length=1024, hop_length=256)
+            validos = f0[(f0 > 60) & (f0 < 1200) & ~np.isnan(f0)]
 
         if len(validos) > 0:
-            pitch = float(np.median(validos))
+            pitch       = float(np.median(validos))
             escala_midi = gerar_escala(tonica, escala)
             midi_atual  = freq_para_midi(pitch)
             midi_alvo   = nota_mais_proxima(midi_atual, escala_midi)
             n_steps     = (midi_alvo - midi_atual) * strength
-            print(f'[autotune] pitch={pitch:.1f}Hz steps={n_steps:.3f}')
-            y = pitch_shift_melhor(y, sr, n_steps)
-
-        fator = 10 ** (2.0 / 20.0)
-        y = np.clip(y * fator, -1.0, 1.0).astype(np.float32)
-
-        wav_out = os.path.join(app.config['PROCESSED_FOLDER'], f'tmp_{uid}.wav')
-        mp3_out = os.path.join(app.config['PROCESSED_FOLDER'], f'venenno_{uid}.mp3')
-        tmp_files.append(wav_out)
-
-        sf.write(wav_out, y, sr)
-        wav_para_mp3(wav_out, mp3_out)
-
-        with open(mp3_out, 'rb') as f:
-            audio_b64 = base64.b64encode(f.read()).decode('utf-8')
-        return jsonify({'sucesso': True, 'url': f'/download/venenno_{uid}.mp3', 'audio_b64': audio_b64})
-
-    except Exception as e:
-        print('ERRO:', traceback.format_exc())
-        return jsonify({'erro': str(e)}), 500
-    finally:
-        for f in tmp_files:
-            if f and os.path.exists(f):
-                try: os.remove(f)
-                except: pass
-
-@app.route('/download/<nome>')
-def download(nome):
-    return send_from_directory(
-        app.config['PROCESSED_FOLDER'], nome,
-        as_attachment=True,
-        download_name=nome
-    )
-
-@app.route('/debug')
-def debug():
-    return jsonify({'ffmpeg': FFMPEG, 'existe': os.path.isfile(FFMPEG)})
-
-@app.after_request
-def no_cache(response):
-    response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
-    response.headers['Pragma'] = 'no-cache'
-    response.headers['Expires'] = '0'
-    return response
-
-
-import threading as _threading
-_jobs = {}  # job_id -> resultado
-
-@app.route('/iniciar', methods=['POST'])
-def iniciar():
-    """Recebe audio, processa em background, retorna job_id imediatamente"""
-    arq = request.files.get('audio')
-    if not arq:
-        return jsonify({'erro': 'Nenhum arquivo enviado.'}), 400
-
-    tonica        = request.form.get('tonica', 'C')
-    escala        = request.form.get('escala', 'maior')
-    strength      = float(request.form.get('strength', 0.8))
-    reducao_ruido = float(request.form.get('reducao_ruido', 0.0))
-    eq_graves     = float(request.form.get('eq_graves', 0.0))
-    eq_medios     = float(request.form.get('eq_medios', 0.0))
-    eq_agudos     = float(request.form.get('eq_agudos', 0.0))
-
-    uid = str(uuid.uuid4())
-    nome_orig = arq.filename or ''
-    ext_orig  = os.path.splitext(nome_orig)[1].lower()
-    if not ext_orig:
-        ct = (arq.content_type or '').lower()
-        if 'mp3' in ct or 'mpeg' in ct:   ext_orig = '.mp3'
-        elif 'mp4' in ct or 'm4a' in ct:  ext_orig = '.mp4'
-        elif 'ogg' in ct:                 ext_orig = '.ogg'
-        elif 'webm' in ct:                ext_orig = '.webm'
-        elif 'wav' in ct:                 ext_orig = '.wav'
-        else:                             ext_orig = '.mp3'
-    orig = os.path.join(app.config['UPLOAD_FOLDER'], uid + ext_orig)
-    arq.save(orig)
-    print(f'[iniciar] job={uid} arquivo={orig} size={os.path.getsize(orig)}')
-
-    _jobs[uid] = {'status': 'processing'}
-
-    def _bg():
-        tmp = []
-        try:
-            wav = converter_wav(orig); tmp.append(wav)
-            y, sr_audio = librosa.load(wav, sr=22050, mono=True)
-            if len(y) == 0:
-                _jobs[uid] = {'status': 'error', 'erro': 'Audio sem conteudo.'}
-                return
-            if reducao_ruido > 0:
-                y = eliminar_ruido(y, sr_audio, intensidade=reducao_ruido)
-            y = aplicar_eq(y, sr_audio, eq_graves, eq_medios, eq_agudos)
-            f0 = librosa.yin(y,
-                fmin=float(librosa.note_to_hz('C2')),
-                fmax=float(librosa.note_to_hz('C7')),
-                sr=sr_audio, frame_length=1024, hop_length=256)
-            validos = f0[(f0 > 80) & (f0 < 1100) & ~np.isnan(f0)]
-            if len(validos) > 0:
-                pitch       = float(np.median(validos))
-                escala_midi = gerar_escala(tonica, escala)
-                midi_atual  = freq_para_midi(pitch)
-                midi_alvo   = nota_mais_proxima(midi_atual, escala_midi)
-                n_steps     = (midi_alvo - midi_atual) * strength
-                print(f'[bg autotune] pitch={pitch:.1f}Hz steps={n_steps:.3f}')
-                y = pitch_shift_melhor(y, sr_audio, n_steps)
+            print(f'[autotune] pitch={pitch:.1f}Hz midi_atual={midi_atual:.2f} midi_alvo={midi_alvo:.2f} steps={n_steps:.3f}')
+            y = pitch_shift_melhor(y, sr_a, n_steps)
+        else:
+            print('[autotune] nenhum pitch detectado na voz')
             fator = 10 ** (2.0 / 20.0)
             y = np.clip(y * fator, -1.0, 1.0).astype(np.float32)
             wav_out = os.path.join(app.config['PROCESSED_FOLDER'], f'tmp_{uid}.wav')
