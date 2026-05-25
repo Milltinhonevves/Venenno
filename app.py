@@ -34,6 +34,42 @@ def converter_wav(origem):
         raise RuntimeError('ffmpeg: ' + r.stderr.decode(errors='replace')[-300:])
     return dest
 
+def eliminar_ruido(y, sr, intensidade=0.5):
+    """
+    Redução de ruído via espectral subtraction.
+    Usa os primeiros 0.5s como amostra do ruído de fundo.
+    """
+    try:
+        import numpy.fft as fft
+        n_fft = 2048
+        hop   = 512
+
+        # Amostra de ruído: primeiros 0.5s
+        n_ruido = min(int(sr * 0.5), len(y) // 4)
+        ruido   = y[:n_ruido]
+
+        # Espectro médio do ruído
+        stft_ruido = librosa.stft(ruido, n_fft=n_fft, hop_length=hop)
+        perfil_ruido = np.mean(np.abs(stft_ruido), axis=1, keepdims=True)
+
+        # STFT do áudio completo
+        stft_y = librosa.stft(y, n_fft=n_fft, hop_length=hop)
+        mag    = np.abs(stft_y)
+        fase   = np.angle(stft_y)
+
+        # Subtração espectral com fator de intensidade
+        fator  = 1.0 + intensidade * 3.0  # 0.5 → 2.5x, 1.0 → 4.0x
+        mag_limpa = np.maximum(mag - perfil_ruido * fator, mag * 0.05)
+
+        # Reconstrói áudio
+        stft_limpo = mag_limpa * np.exp(1j * fase)
+        y_limpo = librosa.istft(stft_limpo, hop_length=hop, length=len(y))
+        print(f'[ruido] redução aplicada (fator={fator:.1f})')
+        return y_limpo.astype(np.float32)
+    except Exception as ex:
+        print(f'[ruido erro] {ex}')
+        return y
+
 def gerar_escala(tonica, escala):
     idx = NOTAS.index(tonica)
     ivs = ESCALAS.get(escala, ESCALAS['cromatica'])
@@ -42,20 +78,14 @@ def gerar_escala(tonica, escala):
 def freq_para_midi(freq):
     return 69 + 12 * np.log2(freq / 440.0)
 
-def midi_para_freq(midi):
-    return 440.0 * (2 ** ((midi - 69) / 12.0))
-
 def nota_mais_proxima(midi_val, escala_midi):
     arr = np.array(escala_midi, dtype=float)
     return escala_midi[int(np.argmin(np.abs(arr - midi_val)))]
 
 def autotune_chunk(chunk, sr, escala_midi, strength):
-    """
-    Divide o chunk em janelas de 0.1s e aplica pitch shift preciso em cada uma.
-    """
     hop = 256
     frame_len = 2048
-    janela_s = 0.1  # 100ms por janela
+    janela_s = 0.1
     janela_samples = int(janela_s * sr)
 
     resultado = np.zeros_like(chunk, dtype=np.float32)
@@ -70,7 +100,6 @@ def autotune_chunk(chunk, sr, escala_midi, strength):
         fim = inicio + janela_samples
         trecho = chunk[inicio:fim]
 
-        # Pega frames correspondentes a essa janela
         f_ini = inicio // hop
         f_fim = fim // hop
         f0_trecho = f0[f_ini:f_fim]
@@ -99,7 +128,6 @@ def autotune_chunk(chunk, sr, escala_midi, strength):
 
         contagem[inicio:fim] += 1
 
-    # Normaliza overlap
     mask = contagem > 0
     resultado[mask] /= contagem[mask]
     return resultado
@@ -137,10 +165,11 @@ def processar():
     if 'audio' not in request.files:
         return jsonify({'erro': 'Nenhum arquivo enviado'}), 400
 
-    arq      = request.files['audio']
-    tonica   = request.form.get('tonica',   'C')
-    escala   = request.form.get('escala',   'maior')
-    strength = float(request.form.get('strength', 0.8))
+    arq        = request.files['audio']
+    tonica     = request.form.get('tonica',    'C')
+    escala     = request.form.get('escala',    'maior')
+    strength   = float(request.form.get('strength',  0.8))
+    reducao_ruido = float(request.form.get('reducao_ruido', 0.0))
 
     uid  = str(uuid.uuid4())
     orig = os.path.join(app.config['UPLOAD_FOLDER'], uid)
@@ -153,11 +182,16 @@ def processar():
 
         wav = converter_wav(orig)
         y, sr = librosa.load(wav, sr=22050, mono=True)
-        print(f'[proc] duracao={len(y)/sr:.1f}s strength={strength} escala={escala} tonica={tonica}')
+        print(f'[proc] duracao={len(y)/sr:.1f}s strength={strength} ruido={reducao_ruido}')
 
         if len(y) == 0:
             return jsonify({'erro': 'Audio sem conteudo.'}), 400
 
+        # 1. Elimina ruído (se ativado)
+        if reducao_ruido > 0:
+            y = eliminar_ruido(y, sr, intensidade=reducao_ruido)
+
+        # 2. Afina
         y2 = processar_em_chunks(y, sr, tonica=tonica, escala=escala, strength=strength)
         y3 = aplicar_ganho(y2)
 
