@@ -27,23 +27,29 @@ ESCALAS = {
 }
 
 def converter_wav(origem):
+    """Converte qualquer formato para WAV - ffmpeg primeiro, librosa como fallback"""
     dest = origem + '_conv.wav'
+    # MP3 do WhatsApp/Drive: usa ffmpeg direto (mais confiavel pra MP3)
+    try:
+        r = subprocess.run(
+            [FFMPEG,'-y','-i',origem,'-ar','44100','-ac','1','-acodec','pcm_s16le','-f','wav',dest],
+            capture_output=True, timeout=300
+        )
+        if r.returncode == 0 and os.path.exists(dest) and os.path.getsize(dest) > 0:
+            print(f'[convert ffmpeg] OK {os.path.getsize(dest)}b')
+            return dest
+        print(f'[convert ffmpeg falhou] {r.stderr.decode(errors="replace")[-200:]}')
+    except Exception as e1:
+        print(f'[convert ffmpeg excecao] {e1}')
+    # Fallback: librosa
     try:
         y, sr = librosa.load(origem, sr=44100, mono=True)
         sf.write(dest, y.astype(np.float32), sr)
+        print(f'[convert librosa] OK')
         return dest
-    except Exception as e1:
-        print(f'[librosa convert erro] {e1} - tentando ffmpeg')
-        try:
-            r = subprocess.run(
-                [FFMPEG,'-y','-i',origem,'-ar','44100','-ac','1','-acodec','pcm_s16le','-f','wav',dest],
-                capture_output=True, timeout=300
-            )
-            if r.returncode != 0:
-                raise RuntimeError('ffmpeg: ' + r.stderr.decode(errors='replace')[-300:])
-            return dest
-        except Exception as e2:
-            raise RuntimeError(f'Nao foi possivel converter o audio: {e1} / {e2}')
+    except Exception as e2:
+        raise RuntimeError(f'Nao foi possivel converter: {e2}')
+
 
 def wav_para_mp3(wav_path, mp3_path):
     r = subprocess.run(
