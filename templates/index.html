@@ -33,7 +33,13 @@ if ("serviceWorker" in navigator) {
   <div class="card">
     <h2>🎙️ Gravador</h2>
     <div class="gravador">
-      <button class="btn-mic" id="btn-mic">🎙️</button>
+      
+        <div class="ctrl">
+          <label class="lbl">Redução de Ruído <span id="ruido-val">0%</span></label>
+          <input type="range" name="reducao_ruido" id="reducao_ruido" min="0" max="1" step="0.05" value="0"
+            oninput="document.getElementById('ruido-val').textContent = Math.round(this.value*100)+'%'">
+        </div>
+        <button class="btn-mic" id="btn-mic">🎙️</button>
       <div class="timer" id="timer">00:00</div>
       <div class="status-rec" id="status-rec">Toque no microfone para gravar</div>
 
