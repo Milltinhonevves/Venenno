@@ -1,4 +1,4 @@
-import os, uuid, subprocess, shutil, traceback
+import os, uuid, subprocess, traceback
 import numpy as np
 import librosa
 import soundfile as sf
@@ -8,12 +8,11 @@ from flask import Flask, request, jsonify, render_template, send_from_directory
 app = Flask(__name__)
 app.config['UPLOAD_FOLDER']    = '/tmp/venenno_up'
 app.config['PROCESSED_FOLDER'] = '/tmp/venenno_out'
-app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024
+app.config['MAX_CONTENT_LENGTH'] = 30 * 1024 * 1024
 
 os.makedirs(app.config['UPLOAD_FOLDER'],    exist_ok=True)
 os.makedirs(app.config['PROCESSED_FOLDER'], exist_ok=True)
 
-# Usa ffmpeg do pacote imageio — sempre disponível!
 FFMPEG = imageio_ffmpeg.get_ffmpeg_exe()
 
 NOTAS = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B']
@@ -28,11 +27,11 @@ ESCALAS = {
 def converter_wav(origem):
     dest = origem + '_conv.wav'
     r = subprocess.run(
-        [FFMPEG,'-y','-i',origem,'-ar','44100','-ac','1','-f','wav',dest],
-        capture_output=True, timeout=120
+        [FFMPEG,'-y','-i',origem,'-ar','22050','-ac','1','-f','wav',dest],
+        capture_output=True, timeout=60
     )
     if r.returncode != 0:
-        raise RuntimeError('ffmpeg erro: ' + r.stderr.decode(errors='replace')[-400:])
+        raise RuntimeError('ffmpeg erro: ' + r.stderr.decode(errors='replace')[-300:])
     return dest
 
 def gerar_escala(tonica, escala):
@@ -40,35 +39,40 @@ def gerar_escala(tonica, escala):
     ivs = ESCALAS.get(escala, ESCALAS['cromatica'])
     return [(o+1)*12 + idx + iv for o in range(-1,9) for iv in ivs]
 
-def autotune(y, sr, tonica='C', escala='cromatica', strength=1.0, smoothing=0.0):
+def autotune_simples(y, sr, tonica='C', escala='cromatica', strength=0.5):
+    """Usa yin (mais leve que pyin) para detectar pitch"""
     try:
-        f0, voiced, _ = librosa.pyin(y,
+        # Limita audio a 30 segundos para nao travar
+        max_samples = 30 * sr
+        if len(y) > max_samples:
+            y = y[:max_samples]
+
+        f0 = librosa.yin(y,
             fmin=float(librosa.note_to_hz('C2')),
             fmax=float(librosa.note_to_hz('C7')),
-            sr=sr, frame_length=2048, hop_length=512)
+            sr=sr, frame_length=1024, hop_length=256)
+
+        escala_midi = gerar_escala(tonica, escala)
+        
+        # Calcula pitch medio da voz
+        validos = f0[(f0 > 80) & (f0 < 1000) & ~np.isnan(f0)]
+        if len(validos) == 0:
+            return y
+            
+        pitch_medio = float(np.median(validos))
+        midi_atual = 69 + 12 * np.log2(pitch_medio / 440.0)
+        midi_alvo = escala_midi[int(np.argmin(np.abs(np.array(escala_midi) - midi_atual)))]
+        n_steps = (midi_alvo - midi_atual) * strength
+        
+        if abs(n_steps) < 0.05:
+            return y
+            
+        print(f'[autotune] pitch={pitch_medio:.1f}Hz steps={n_steps:.2f}')
+        return librosa.effects.pitch_shift(y, sr=sr, n_steps=n_steps, bins_per_octave=24)
+        
     except Exception as ex:
-        print('pyin erro:', ex); return y
-
-    escala_midi = gerar_escala(tonica, escala)
-    shifts = np.zeros(len(f0))
-    for i, freq in enumerate(f0):
-        if voiced[i] and freq and not np.isnan(freq) and freq > 0:
-            midi = 69 + 12 * np.log2(max(freq,1e-9)/440.0)
-            alvo = escala_midi[int(np.argmin(np.abs(np.array(escala_midi)-midi)))]
-            shifts[i] = (alvo - midi) * strength
-
-    if smoothing > 0:
-        from scipy.ndimage import uniform_filter1d
-        shifts = uniform_filter1d(shifts, size=max(1,int(smoothing*20)))
-
-    vs = shifts[voiced.astype(bool)]
-    if len(vs)==0 or np.all(np.isnan(vs)): return y
-    st = float(np.nanmean(vs))
-    if abs(st) < 0.01: return y
-    try:
-        return librosa.effects.pitch_shift(y, sr=sr, n_steps=st)
-    except Exception as ex:
-        print('pitch_shift erro:', ex); return y
+        print('autotune erro:', ex)
+        return y
 
 def aplicar_ganho(y, db=2.0):
     fator = 10 ** (db / 20.0)
@@ -87,7 +91,6 @@ def processar():
     tonica    = request.form.get('tonica',    'C')
     escala    = request.form.get('escala',    'cromatica')
     strength  = float(request.form.get('strength',  0.5))
-    smoothing = float(request.form.get('smoothing', 0.5))
 
     uid  = str(uuid.uuid4())
     orig = os.path.join(app.config['UPLOAD_FOLDER'], uid)
@@ -100,15 +103,14 @@ def processar():
         if tam == 0:
             return jsonify({'erro': 'Arquivo vazio, tente gravar de novo.'}), 400
 
-        wav  = converter_wav(orig)
-        y, sr = librosa.load(wav, sr=None, mono=True)
+        wav = converter_wav(orig)
+        y, sr = librosa.load(wav, sr=22050, mono=True)
         print(f'[proc] samples={len(y)} sr={sr}')
 
         if len(y) == 0:
-            return jsonify({'erro': 'Audio sem conteudo apos conversao.'}), 400
+            return jsonify({'erro': 'Audio sem conteudo.'}), 400
 
-        y2 = autotune(y, sr, tonica=tonica, escala=escala,
-                      strength=strength, smoothing=smoothing)
+        y2 = autotune_simples(y, sr, tonica=tonica, escala=escala, strength=strength)
         y3 = aplicar_ganho(y2)
 
         nome = f'venenno_{uid}.wav'
