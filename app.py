@@ -35,36 +35,20 @@ def converter_wav(origem):
     return dest
 
 def eliminar_ruido(y, sr, intensidade=0.5):
-    """
-    Redução de ruído via espectral subtraction.
-    Usa os primeiros 0.5s como amostra do ruído de fundo.
-    """
     try:
-        import numpy.fft as fft
         n_fft = 2048
         hop   = 512
-
-        # Amostra de ruído: primeiros 0.5s
         n_ruido = min(int(sr * 0.5), len(y) // 4)
         ruido   = y[:n_ruido]
-
-        # Espectro médio do ruído
         stft_ruido = librosa.stft(ruido, n_fft=n_fft, hop_length=hop)
         perfil_ruido = np.mean(np.abs(stft_ruido), axis=1, keepdims=True)
-
-        # STFT do áudio completo
         stft_y = librosa.stft(y, n_fft=n_fft, hop_length=hop)
         mag    = np.abs(stft_y)
         fase   = np.angle(stft_y)
-
-        # Subtração espectral com fator de intensidade
-        fator  = 1.0 + intensidade * 3.0  # 0.5 → 2.5x, 1.0 → 4.0x
+        fator  = 1.0 + intensidade * 3.0
         mag_limpa = np.maximum(mag - perfil_ruido * fator, mag * 0.05)
-
-        # Reconstrói áudio
         stft_limpo = mag_limpa * np.exp(1j * fase)
         y_limpo = librosa.istft(stft_limpo, hop_length=hop, length=len(y))
-        print(f'[ruido] redução aplicada (fator={fator:.1f})')
         return y_limpo.astype(np.float32)
     except Exception as ex:
         print(f'[ruido erro] {ex}')
@@ -82,55 +66,41 @@ def nota_mais_proxima(midi_val, escala_midi):
     arr = np.array(escala_midi, dtype=float)
     return escala_midi[int(np.argmin(np.abs(arr - midi_val)))]
 
-def autotune_chunk(chunk, sr, escala_midi, strength):
-    hop = 256
+def autotune_simples(y, sr, escala_midi, strength):
+    """
+    Abordagem simples e limpa:
+    1. Detecta pitch médio do trecho inteiro
+    2. Aplica pitch_shift uma única vez
+    Sem overlap, sem picotamento, sem abafamento.
+    """
+    hop = 512
     frame_len = 2048
-    janela_s = 0.1
-    janela_samples = int(janela_s * sr)
 
-    resultado = np.zeros_like(chunk, dtype=np.float32)
-    contagem  = np.zeros_like(chunk, dtype=np.float32)
-
-    f0 = librosa.yin(chunk,
+    f0 = librosa.yin(y,
         fmin=float(librosa.note_to_hz('C2')),
         fmax=float(librosa.note_to_hz('C7')),
         sr=sr, frame_length=frame_len, hop_length=hop)
 
-    for inicio in range(0, len(chunk) - janela_samples, janela_samples // 2):
-        fim = inicio + janela_samples
-        trecho = chunk[inicio:fim]
+    validos = f0[(f0 > 80) & (f0 < 1100) & ~np.isnan(f0)]
 
-        f_ini = inicio // hop
-        f_fim = fim // hop
-        f0_trecho = f0[f_ini:f_fim]
-        validos = f0_trecho[(f0_trecho > 80) & (f0_trecho < 1100) & ~np.isnan(f0_trecho)]
+    if len(validos) == 0:
+        print('[autotune] sem pitch detectado, retornando original')
+        return y
 
-        if len(validos) == 0:
-            resultado[inicio:fim] += trecho
-            contagem[inicio:fim]  += 1
-            continue
+    pitch = float(np.median(validos))
+    midi_atual = freq_para_midi(pitch)
+    midi_alvo  = nota_mais_proxima(midi_atual, escala_midi)
+    n_steps    = (midi_alvo - midi_atual) * strength
 
-        pitch = float(np.median(validos))
-        midi_atual = freq_para_midi(pitch)
-        midi_alvo  = nota_mais_proxima(midi_atual, escala_midi)
-        n_steps    = (midi_alvo - midi_atual) * strength
+    print(f'[autotune] pitch={pitch:.1f}Hz midi={midi_atual:.1f} alvo={midi_alvo:.1f} steps={n_steps:.2f}')
 
-        if abs(n_steps) > 0.02:
-            try:
-                trecho_afinado = librosa.effects.pitch_shift(
-                    trecho.astype(np.float32), sr=sr,
-                    n_steps=n_steps, bins_per_octave=48)
-                resultado[inicio:fim] += trecho_afinado
-            except:
-                resultado[inicio:fim] += trecho
-        else:
-            resultado[inicio:fim] += trecho
+    if abs(n_steps) < 0.05:
+        print('[autotune] ja afinado, nada a fazer')
+        return y
 
-        contagem[inicio:fim] += 1
-
-    mask = contagem > 0
-    resultado[mask] /= contagem[mask]
-    return resultado
+    return librosa.effects.pitch_shift(
+        y.astype(np.float32), sr=sr,
+        n_steps=n_steps, bins_per_octave=48)
 
 def processar_em_chunks(y, sr, tonica, escala, strength):
     chunk_size  = 30 * sr
@@ -145,7 +115,7 @@ def processar_em_chunks(y, sr, tonica, escala, strength):
             resultado.append(chunk)
             continue
         try:
-            resultado.append(autotune_chunk(chunk, sr, escala_midi, strength))
+            resultado.append(autotune_simples(chunk, sr, escala_midi, strength))
         except Exception as ex:
             print(f'[chunk erro] {ex}')
             resultado.append(chunk)
@@ -165,11 +135,11 @@ def processar():
     if 'audio' not in request.files:
         return jsonify({'erro': 'Nenhum arquivo enviado'}), 400
 
-    arq        = request.files['audio']
-    tonica     = request.form.get('tonica',    'C')
-    escala     = request.form.get('escala',    'maior')
-    strength   = float(request.form.get('strength',  0.8))
-    reducao_ruido = float(request.form.get('reducao_ruido', 0.0))
+    arq           = request.files['audio']
+    tonica        = request.form.get('tonica',         'C')
+    escala        = request.form.get('escala',         'maior')
+    strength      = float(request.form.get('strength',       0.8))
+    reducao_ruido = float(request.form.get('reducao_ruido',  0.0))
 
     uid  = str(uuid.uuid4())
     orig = os.path.join(app.config['UPLOAD_FOLDER'], uid)
@@ -187,11 +157,9 @@ def processar():
         if len(y) == 0:
             return jsonify({'erro': 'Audio sem conteudo.'}), 400
 
-        # 1. Elimina ruído (se ativado)
         if reducao_ruido > 0:
             y = eliminar_ruido(y, sr, intensidade=reducao_ruido)
 
-        # 2. Afina
         y2 = processar_em_chunks(y, sr, tonica=tonica, escala=escala, strength=strength)
         y3 = aplicar_ganho(y2)
 
