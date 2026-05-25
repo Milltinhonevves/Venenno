@@ -148,52 +148,51 @@ def pitch_shift_melhor(y, sr, n_steps):
 
 def autotune_frame_a_frame(y, sr, tonica, escala, strength=0.8):
     """
-    Autotune leve por chunks de 1s: usa yin simples (rapido) por chunk
-    e corrige pitch individualmente. Funciona bem no Railway.
+    Autotune ultra-leve: detecta pitch medio com yin (rapido),
+    calcula quantos semitons deslocar e aplica UM pitch_shift no audio todo.
+    Minimo de memoria, maximo de compatibilidade com Railway.
     """
     escala_midi = gerar_escala(tonica, escala)
-    chunk_size  = int(sr * 1.0)  # 1 segundo por chunk
-    out_chunks  = []
-    n_chunks    = max(1, int(np.ceil(len(y) / chunk_size)))
-    print(f'[autotune] {n_chunks} chunks de 1s')
 
-    for i in range(n_chunks):
-        start = i * chunk_size
-        end   = min(start + chunk_size, len(y))
-        seg   = y[start:end].copy()
+    # Usa apenas os primeiros 10s pra detectar pitch (rapido)
+    amostra = y[:sr * 10] if len(y) > sr * 10 else y
 
-        if len(seg) < 1024:
-            out_chunks.append(seg)
-            continue
+    try:
+        f0 = librosa.yin(
+            amostra,
+            fmin=float(librosa.note_to_hz('C2')),
+            fmax=float(librosa.note_to_hz('C7')),
+            sr=sr,
+            frame_length=2048,
+            hop_length=512
+        )
+        validos = f0[(f0 > 60) & (f0 < 1200) & ~np.isnan(f0)]
+        print(f'[autotune] yin validos={len(validos)}')
+    except Exception as e:
+        print(f'[autotune] yin erro: {e}')
+        return y
 
-        try:
-            # yin e rapido e nao aloca memoria extra
-            f0_seg = librosa.yin(
-                seg,
-                fmin=float(librosa.note_to_hz('C2')),
-                fmax=float(librosa.note_to_hz('C7')),
-                sr=sr,
-                frame_length=1024,
-                hop_length=256
-            )
-            validos = f0_seg[(f0_seg > 60) & (f0_seg < 1200) & ~np.isnan(f0_seg)]
+    if len(validos) == 0:
+        print('[autotune] nenhum pitch detectado')
+        return y
 
-            if len(validos) > 0:
-                pitch   = float(np.median(validos))
-                m_atual = freq_para_midi(pitch)
-                m_alvo  = nota_mais_proxima(m_atual, escala_midi)
-                n_steps = (m_alvo - m_atual) * strength
-                print(f'[autotune] chunk={i} pitch={pitch:.1f}Hz steps={n_steps:.3f}')
-                if abs(n_steps) > 0.05:
-                    seg = librosa.effects.pitch_shift(
-                        y=seg, sr=sr, n_steps=float(n_steps)
-                    ).astype(np.float32)
-        except Exception as ex:
-            print(f'[autotune] chunk {i} erro: {ex}')
+    pitch   = float(np.median(validos))
+    m_atual = freq_para_midi(pitch)
+    m_alvo  = nota_mais_proxima(m_atual, escala_midi)
+    n_steps = (m_alvo - m_atual) * strength
+    print(f'[autotune] pitch={pitch:.1f}Hz midi={m_atual:.1f} alvo={m_alvo:.1f} steps={n_steps:.3f}')
 
-        out_chunks.append(seg)
+    if abs(n_steps) < 0.05:
+        print('[autotune] ja afinado, sem ajuste')
+        return y
 
-    return np.concatenate(out_chunks).astype(np.float32)
+    try:
+        resultado = librosa.effects.pitch_shift(y=y, sr=sr, n_steps=float(n_steps))
+        return resultado.astype(np.float32)
+    except Exception as e:
+        print(f'[autotune] pitch_shift erro: {e}')
+        return y
+
 def index():
     return render_template('index.html')
 
