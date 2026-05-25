@@ -8,7 +8,7 @@ from flask import Flask, request, jsonify, render_template, send_from_directory
 app = Flask(__name__)
 app.config['UPLOAD_FOLDER']    = '/tmp/venenno_up'
 app.config['PROCESSED_FOLDER'] = '/tmp/venenno_out'
-app.config['MAX_CONTENT_LENGTH'] = 30 * 1024 * 1024
+app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024
 
 os.makedirs(app.config['UPLOAD_FOLDER'],    exist_ok=True)
 os.makedirs(app.config['PROCESSED_FOLDER'], exist_ok=True)
@@ -28,7 +28,7 @@ def converter_wav(origem):
     dest = origem + '_conv.wav'
     r = subprocess.run(
         [FFMPEG,'-y','-i',origem,'-ar','22050','-ac','1','-f','wav',dest],
-        capture_output=True, timeout=60
+        capture_output=True, timeout=120
     )
     if r.returncode != 0:
         raise RuntimeError('ffmpeg erro: ' + r.stderr.decode(errors='replace')[-300:])
@@ -39,40 +39,47 @@ def gerar_escala(tonica, escala):
     ivs = ESCALAS.get(escala, ESCALAS['cromatica'])
     return [(o+1)*12 + idx + iv for o in range(-1,9) for iv in ivs]
 
-def autotune_simples(y, sr, tonica='C', escala='cromatica', strength=0.5):
-    """Usa yin (mais leve que pyin) para detectar pitch"""
-    try:
-        # Limita audio a 30 segundos para nao travar
-        max_samples = 30 * sr
-        if len(y) > max_samples:
-            y = y[:max_samples]
+def processar_em_chunks(y, sr, tonica, escala, strength):
+    """Processa audio em pedacos de 20s para nao travar memoria"""
+    chunk_size = 20 * sr
+    escala_midi = gerar_escala(tonica, escala)
+    resultado = []
 
-        f0 = librosa.yin(y,
-            fmin=float(librosa.note_to_hz('C2')),
-            fmax=float(librosa.note_to_hz('C7')),
-            sr=sr, frame_length=1024, hop_length=256)
+    for inicio in range(0, len(y), chunk_size):
+        chunk = y[inicio:inicio + chunk_size]
+        if len(chunk) < sr:  # chunk muito pequeno, adiciona sem processar
+            resultado.append(chunk)
+            continue
 
-        escala_midi = gerar_escala(tonica, escala)
-        
-        # Calcula pitch medio da voz
-        validos = f0[(f0 > 80) & (f0 < 1000) & ~np.isnan(f0)]
-        if len(validos) == 0:
-            return y
-            
-        pitch_medio = float(np.median(validos))
-        midi_atual = 69 + 12 * np.log2(pitch_medio / 440.0)
-        midi_alvo = escala_midi[int(np.argmin(np.abs(np.array(escala_midi) - midi_atual)))]
-        n_steps = (midi_alvo - midi_atual) * strength
-        
-        if abs(n_steps) < 0.05:
-            return y
-            
-        print(f'[autotune] pitch={pitch_medio:.1f}Hz steps={n_steps:.2f}')
-        return librosa.effects.pitch_shift(y, sr=sr, n_steps=n_steps, bins_per_octave=24)
-        
-    except Exception as ex:
-        print('autotune erro:', ex)
-        return y
+        try:
+            f0 = librosa.yin(chunk,
+                fmin=float(librosa.note_to_hz('C2')),
+                fmax=float(librosa.note_to_hz('C7')),
+                sr=sr, frame_length=1024, hop_length=256)
+
+            validos = f0[(f0 > 80) & (f0 < 1000) & ~np.isnan(f0)]
+            if len(validos) == 0:
+                resultado.append(chunk)
+                continue
+
+            pitch_medio = float(np.median(validos))
+            midi_atual = 69 + 12 * np.log2(pitch_medio / 440.0)
+            midi_alvo = escala_midi[int(np.argmin(np.abs(np.array(escala_midi) - midi_atual)))]
+            n_steps = (midi_alvo - midi_atual) * strength
+
+            if abs(n_steps) < 0.05:
+                resultado.append(chunk)
+                continue
+
+            print(f'[chunk {inicio//sr}s] pitch={pitch_medio:.1f}Hz steps={n_steps:.2f}')
+            chunk_afinado = librosa.effects.pitch_shift(chunk, sr=sr, n_steps=n_steps, bins_per_octave=24)
+            resultado.append(chunk_afinado)
+
+        except Exception as ex:
+            print(f'[chunk erro] {ex}')
+            resultado.append(chunk)
+
+    return np.concatenate(resultado)
 
 def aplicar_ganho(y, db=2.0):
     fator = 10 ** (db / 20.0)
@@ -88,9 +95,9 @@ def processar():
         return jsonify({'erro': 'Nenhum arquivo enviado'}), 400
 
     arq  = request.files['audio']
-    tonica    = request.form.get('tonica',    'C')
-    escala    = request.form.get('escala',    'cromatica')
-    strength  = float(request.form.get('strength',  0.5))
+    tonica   = request.form.get('tonica',   'C')
+    escala   = request.form.get('escala',   'cromatica')
+    strength = float(request.form.get('strength', 0.5))
 
     uid  = str(uuid.uuid4())
     orig = os.path.join(app.config['UPLOAD_FOLDER'], uid)
@@ -105,16 +112,17 @@ def processar():
 
         wav = converter_wav(orig)
         y, sr = librosa.load(wav, sr=22050, mono=True)
-        print(f'[proc] samples={len(y)} sr={sr}')
+        print(f'[proc] duracao={len(y)/sr:.1f}s samples={len(y)} sr={sr}')
 
         if len(y) == 0:
             return jsonify({'erro': 'Audio sem conteudo.'}), 400
 
-        y2 = autotune_simples(y, sr, tonica=tonica, escala=escala, strength=strength)
+        y2 = processar_em_chunks(y, sr, tonica=tonica, escala=escala, strength=strength)
         y3 = aplicar_ganho(y2)
 
         nome = f'venenno_{uid}.wav'
         sf.write(os.path.join(app.config['PROCESSED_FOLDER'], nome), y3, sr)
+        print(f'[proc] salvo {nome} ({len(y3)/sr:.1f}s)')
         return jsonify({'sucesso': True, 'url': f'/download/{nome}'})
 
     except Exception as e:
