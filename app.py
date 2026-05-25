@@ -1,3 +1,4 @@
+import base64
 import os, uuid, subprocess, traceback
 import numpy as np
 import librosa
@@ -166,7 +167,9 @@ def processar():
         sf.write(wav_out, y, sr)
         wav_para_mp3(wav_out, mp3_out)
 
-        return jsonify({'sucesso': True, 'url': f'/download/venenno_{uid}.mp3'})
+        with open(mp3_out, 'rb') as f:
+            audio_b64 = base64.b64encode(f.read()).decode('utf-8')
+        return jsonify({'sucesso': True, 'url': f'/download/venenno_{uid}.mp3', 'audio_b64': audio_b64})
 
     except Exception as e:
         print('ERRO:', traceback.format_exc())
