@@ -33,7 +33,7 @@ function mostrarErro(msg) {
   if (res) res.hidden = true;
 }
 
-function mostrarResultado(url) {
+function mostrarResultado(url, b64) {
   const el = document.getElementById('resultado');
   const player = document.getElementById('player');
   const dl = document.getElementById('btn-download');
@@ -41,14 +41,15 @@ function mostrarResultado(url) {
   if (erro) erro.hidden = true;
   if (el) el.hidden = false;
 
-  // Igual ao preview - baixa como blob e cria URL local
-  fetch(url + '?t=' + Date.now())
-    .then(function(r) { return r.blob(); })
-    .then(function(blob) {
-      const blobUrl = URL.createObjectURL(new Blob([blob], {type: 'audio/mpeg'}));
-      if (player) { player.src = blobUrl; player.load(); player.play().catch(function(){}); }
-      if (dl) { dl.href = blobUrl; dl.download = 'venenno.mp3'; }
-    });
+  // Converte base64 pra blob — igual ao que funciona no preview
+  const bytes = atob(b64);
+  const arr = new Uint8Array(bytes.length);
+  for (let i = 0; i < bytes.length; i++) arr[i] = bytes.charCodeAt(i);
+  const blob = new Blob([arr], {type: 'audio/mpeg'});
+  const blobUrl = URL.createObjectURL(blob);
+
+  if (player) { player.src = blobUrl; player.load(); player.play().catch(function(){}); }
+  if (dl) { dl.href = blobUrl; dl.download = 'venenno.mp3'; }
 
   const btnReusar = document.getElementById('btn-reusar');
   if (btnReusar && blobGravado) btnReusar.hidden = false;
@@ -194,7 +195,7 @@ document.getElementById('btn-processar').addEventListener('click', async (e) => 
       return;
     }
     if (data.sucesso) {
-      mostrarResultado(window.location.origin + data.url);
+      mostrarResultado(window.location.origin + data.url, data.audio_b64);
     } else {
       mostrarErro(data.erro || 'Erro desconhecido');
     }
