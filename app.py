@@ -44,21 +44,29 @@ def wav_para_mp3(wav_path, mp3_path):
         raise RuntimeError('ffmpeg mp3: ' + r.stderr.decode(errors='replace')[-200:])
 
 def aplicar_eq_ffmpeg(wav_in, graves=0, medios=0, agudos=0):
-    if graves == 0 and medios == 0 and agudos == 0:
+    try:
+        graves = float(graves); medios = float(medios); agudos = float(agudos)
+        if graves == 0 and medios == 0 and agudos == 0:
+            return wav_in
+        filtros = []
+        if graves != 0: filtros.append(f"equalizer=f=100:t=o:w=200:g={graves}")
+        if medios != 0: filtros.append(f"equalizer=f=1000:t=o:w=500:g={medios}")
+        if agudos != 0: filtros.append(f"equalizer=f=8000:t=o:w=3000:g={agudos}")
+        wav_out = wav_in + '_eq.wav'
+        r = subprocess.run(
+            [FFMPEG,'-y','-i',wav_in,'-af',','.join(filtros),'-ar','44100','-ac','1',wav_out],
+            capture_output=True, timeout=300
+        )
+        if r.returncode != 0:
+            print(f'[eq erro] {r.stderr.decode(errors="replace")[-200:]}')
+            return wav_in
+        if not os.path.exists(wav_out) or os.path.getsize(wav_out) == 0:
+            print('[eq erro] arquivo de saida vazio')
+            return wav_in
+        return wav_out
+    except Exception as e:
+        print(f'[eq excecao] {e}')
         return wav_in
-    filtros = []
-    if graves != 0: filtros.append(f"equalizer=f=100:t=o:w=200:g={graves}")
-    if medios != 0: filtros.append(f"equalizer=f=1000:t=o:w=500:g={medios}")
-    if agudos != 0: filtros.append(f"equalizer=f=8000:t=o:w=3000:g={agudos}")
-    wav_out = wav_in + '_eq.wav'
-    r = subprocess.run(
-        [FFMPEG,'-y','-i',wav_in,'-af',','.join(filtros),'-ar','44100','-ac','1',wav_out],
-        capture_output=True, timeout=300
-    )
-    if r.returncode != 0:
-        print(f'[eq erro] {r.stderr.decode(errors="replace")[-200:]}')
-        return wav_in
-    return wav_out
 
 def eliminar_ruido(y, sr, intensidade=0.5):
     try:
