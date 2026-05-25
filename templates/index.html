@@ -39,6 +39,25 @@ if ("serviceWorker" in navigator) {
           <input type="range" name="reducao_ruido" id="reducao_ruido" min="0" max="1" step="0.05" value="0"
             oninput="document.getElementById('ruido-val').textContent = Math.round(this.value*100)+'%'">
         </div>
+        
+        <div class="eq-section">
+          <p class="eq-titulo">🎛️ Equalizador</p>
+          <div class="ctrl">
+            <label class="lbl">Graves (100Hz) <span id="eq-graves-val">0dB</span></label>
+            <input type="range" name="eq_graves" id="eq_graves" min="-12" max="12" step="1" value="0"
+              oninput="document.getElementById('eq-graves-val').textContent = this.value+'dB'">
+          </div>
+          <div class="ctrl">
+            <label class="lbl">Médios (1kHz) <span id="eq-medios-val">0dB</span></label>
+            <input type="range" name="eq_medios" id="eq_medios" min="-12" max="12" step="1" value="0"
+              oninput="document.getElementById('eq-medios-val').textContent = this.value+'dB'">
+          </div>
+          <div class="ctrl">
+            <label class="lbl">Agudos (8kHz) <span id="eq-agudos-val">0dB</span></label>
+            <input type="range" name="eq_agudos" id="eq_agudos" min="-12" max="12" step="1" value="0"
+              oninput="document.getElementById('eq-agudos-val').textContent = this.value+'dB'">
+          </div>
+        </div>
         <button class="btn-mic" id="btn-mic">🎙️</button>
       <div class="timer" id="timer">00:00</div>
       <div class="status-rec" id="status-rec">Toque no microfone para gravar</div>
