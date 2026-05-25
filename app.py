@@ -3,7 +3,6 @@ import os, uuid, subprocess, traceback
 import numpy as np
 import librosa
 import soundfile as sf
-import imageio_ffmpeg
 from scipy.signal import butter, sosfilt
 from flask import Flask, request, jsonify, render_template, send_from_directory
 
@@ -15,7 +14,10 @@ app.config['MAX_CONTENT_LENGTH'] = 200 * 1024 * 1024
 os.makedirs(app.config['UPLOAD_FOLDER'],    exist_ok=True)
 os.makedirs(app.config['PROCESSED_FOLDER'], exist_ok=True)
 
-FFMPEG = imageio_ffmpeg.get_ffmpeg_exe()
+# Usa ffmpeg do sistema (instalado via nixpacks com todos os codecs)
+import shutil as _shutil
+FFMPEG = _shutil.which('ffmpeg') or 'ffmpeg'
+print(f'[startup] ffmpeg path: {FFMPEG}')
 
 NOTAS = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B']
 ESCALAS = {
