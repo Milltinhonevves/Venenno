@@ -316,7 +316,6 @@ def iniciar():
                 _jobs[uid] = {'status': 'error', 'erro': 'Nenhuma nota detectada.'}
                 return
             freq_media = float(np.median(validos))
-            nota_detect = freq_para_nota(freq_media)
             notas_alvo = notas_da_escala(tonica, escala)
             y_afinado = afinar_audio(y, sr, f0, notas_alvo, strength)
             y_norm = y_afinado / (np.max(np.abs(y_afinado)) + 1e-9)
