@@ -4,16 +4,23 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
   <title>Venenno</title>
   <link rel="manifest" href="/static/manifest.json">
   <meta name="theme-color" content="#00ff88">
-  <link rel="stylesheet" href="/static/css/style.css">
+  <link rel="stylesheet" href="/static/css/style.css?v=11">
   <script>
-    // Limpa cache antigo
-    if ("serviceWorker" in navigator) {
-      caches.keys().then(keys => keys.forEach(k => caches.delete(k)));
-      navigator.serviceWorker.getRegistrations().then(regs => regs.forEach(r => r.unregister()));
-    }
+    // Remove TODOS os service workers e caches antes de tudo
+    (async function() {
+      if ("serviceWorker" in navigator) {
+        const regs = await navigator.serviceWorker.getRegistrations();
+        for (const r of regs) await r.unregister();
+      }
+      if ("caches" in window) {
+        const keys = await caches.keys();
+        for (const k of keys) await caches.delete(k);
+      }
+    })();
   </script>
 </head>
 <body>
@@ -90,17 +97,17 @@
     <h2>🎛️ Equalizador</h2>
     <div class="slider-group">
       <div class="slider-header"><span>GRAVES (100Hz)</span><span id="eq-graves-val">0dB</span></div>
-      <input type="range" name="eq_graves" id="eq_graves" min="-12" max="12" step="1" value="0"
+      <input type="range" name="eq_graves" min="-12" max="12" step="1" value="0"
         oninput="document.getElementById('eq-graves-val').textContent=this.value+'dB'">
     </div>
     <div class="slider-group">
       <div class="slider-header"><span>MÉDIOS (1kHz)</span><span id="eq-medios-val">0dB</span></div>
-      <input type="range" name="eq_medios" id="eq_medios" min="-12" max="12" step="1" value="0"
+      <input type="range" name="eq_medios" min="-12" max="12" step="1" value="0"
         oninput="document.getElementById('eq-medios-val').textContent=this.value+'dB'">
     </div>
     <div class="slider-group">
       <div class="slider-header"><span>AGUDOS (8kHz)</span><span id="eq-agudos-val">0dB</span></div>
-      <input type="range" name="eq_agudos" id="eq_agudos" min="-12" max="12" step="1" value="0"
+      <input type="range" name="eq_agudos" min="-12" max="12" step="1" value="0"
         oninput="document.getElementById('eq-agudos-val').textContent=this.value+'dB'">
     </div>
   </div>
@@ -110,7 +117,7 @@
     <h2>🎚️ Efeitos</h2>
     <div class="slider-group">
       <div class="slider-header"><span>REDUÇÃO DE RUÍDO</span><span id="ruido-val">0%</span></div>
-      <input type="range" name="reducao_ruido" id="reducao_ruido" min="0" max="1" step="0.05" value="0"
+      <input type="range" name="reducao_ruido" min="0" max="1" step="0.05" value="0"
         oninput="document.getElementById('ruido-val').textContent=Math.round(this.value*100)+'%'">
     </div>
   </div>
@@ -137,10 +144,10 @@
 
 <footer>🐍 VENENNO — por Miltinho Neves</footer>
 
-<script src="/static/js/main.js?v=10"></script>
+<script src="/static/js/main.js?v=11"></script>
 <script>
   if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.register("/static/sw.js");
+    navigator.serviceWorker.register("/static/sw.js?v=11");
   }
 </script>
 </body>
