@@ -186,34 +186,35 @@ document.getElementById('btn-processar').addEventListener('click', async (e) => 
   fd.append('eq_medios',     document.querySelector('[name=eq_medios]').value);
   fd.append('eq_agudos',     document.querySelector('[name=eq_agudos]').value);
 
-  // Usa XMLHttpRequest (mais estavel que fetch no Android)
-  const xhr = new XMLHttpRequest();
-  xhr.open('POST', '/processar', true);
-  xhr.timeout = 300000; // 5 minutos
+  // Envia arquivo e faz polling do resultado (evita timeout no Android)
+  try {
+    const resp = await fetch('/iniciar', { method: 'POST', body: fd });
+    const { job_id, erro } = await resp.json();
+    if (!job_id) { mostrarErro(erro || 'Falha ao iniciar'); setProcessando(false); return; }
 
-  xhr.onload = function() {
-    setProcessando(false);
-    try {
-      const data = JSON.parse(xhr.responseText);
-      if (data.sucesso) {
-        mostrarResultado('', data.audio_b64);
-      } else {
-        mostrarErro(data.erro || 'Erro desconhecido');
+    // Polling a cada 3s
+    const poll = setInterval(async () => {
+      try {
+        const r2 = await fetch('/status/' + job_id);
+        const d  = await r2.json();
+        if (d.status === 'done') {
+          clearInterval(poll);
+          setProcessando(false);
+          mostrarResultado('', d.audio_b64);
+        } else if (d.status === 'error' || d.status === 'not_found') {
+          clearInterval(poll);
+          setProcessando(false);
+          mostrarErro(d.erro || 'Erro no processamento');
+        }
+        // se 'processing', continua esperando
+      } catch(e) {
+        clearInterval(poll);
+        setProcessando(false);
+        mostrarErro('Erro ao verificar status: ' + e.message);
       }
-    } catch(e) {
-      mostrarErro('Resposta invalida: ' + xhr.responseText.substring(0, 100));
-    }
-  };
-
-  xhr.onerror = function() {
+    }, 3000);
+  } catch(err) {
     setProcessando(false);
-    mostrarErro('Erro de conexao. Verifique sua internet e tente novamente.');
-  };
-
-  xhr.ontimeout = function() {
-    setProcessando(false);
-    mostrarErro('Tempo esgotado. Tente um arquivo menor.');
-  };
-
-  xhr.send(fd);
+    mostrarErro('Erro ao enviar audio: ' + err.message);
+  }
 });
