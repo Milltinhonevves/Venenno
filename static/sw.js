@@ -1,11 +1,27 @@
-// Venenno SW v1 — sem cache agressivo
-self.addEventListener('install',  () => self.skipWaiting());
-self.addEventListener('activate', e  => {
+const CACHE = "venenno-v9";
+const ASSETS = ["/", "/static/css/style.css", "/static/js/main.js"];
+
+self.addEventListener("install", e => {
   e.waitUntil(
-    caches.keys()
-      .then(ks => Promise.all(ks.map(k => caches.delete(k))))
-      .then(() => self.clients.claim())
+    caches.open(CACHE).then(c => c.addAll(ASSETS)).then(() => self.skipWaiting())
   );
 });
-// Sem cache — sempre busca do servidor
-self.addEventListener('fetch', e => e.respondWith(fetch(e.request)));
+
+self.addEventListener("activate", e => {
+  e.waitUntil(
+    caches.keys().then(keys =>
+      Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k)))
+    ).then(() => self.clients.claim())
+  );
+});
+
+self.addEventListener("fetch", e => {
+  if (e.request.method !== "GET") return;
+  e.respondWith(
+    fetch(e.request).then(res => {
+      const clone = res.clone();
+      caches.open(CACHE).then(c => c.put(e.request, clone));
+      return res;
+    }).catch(() => caches.match(e.request))
+  );
+});
