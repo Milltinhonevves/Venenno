@@ -186,9 +186,28 @@ document.getElementById('btn-processar').addEventListener('click', async (e) => 
   fd.append('eq_medios',     document.querySelector('[name=eq_medios]').value);
   fd.append('eq_agudos',     document.querySelector('[name=eq_agudos]').value);
 
-  // Envia arquivo e faz polling do resultado (evita timeout no Android)
+  // Converte blob pra base64 e envia como JSON (resolve Failed to fetch no Android)
   try {
-    const resp = await fetch('/iniciar', { method: 'POST', body: fd });
+    const blob = fd.get('audio');
+    const mime = blob.type || 'audio/mpeg';
+    const arrayBuf = await blob.arrayBuffer();
+    const uint8 = new Uint8Array(arrayBuf);
+    let binStr = '';
+    for (let i = 0; i < uint8.length; i++) binStr += String.fromCharCode(uint8[i]);
+    const audioB64 = btoa(binStr);
+
+    const payload = {
+      audio: audioB64, mime,
+      tonica: fd.get('tonica'), escala: fd.get('escala'),
+      strength: fd.get('strength'), reducao_ruido: fd.get('reducao_ruido'),
+      eq_graves: fd.get('eq_graves'), eq_medios: fd.get('eq_medios'), eq_agudos: fd.get('eq_agudos')
+    };
+
+    const resp = await fetch('/enviar', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
     const { job_id, erro } = await resp.json();
     if (!job_id) { mostrarErro(erro || 'Falha ao iniciar'); setProcessando(false); return; }
 
@@ -206,15 +225,14 @@ document.getElementById('btn-processar').addEventListener('click', async (e) => 
           setProcessando(false);
           mostrarErro(d.erro || 'Erro no processamento');
         }
-        // se 'processing', continua esperando
       } catch(e) {
         clearInterval(poll);
         setProcessando(false);
-        mostrarErro('Erro ao verificar status: ' + e.message);
+        mostrarErro('Erro no status: ' + e.message);
       }
     }, 3000);
   } catch(err) {
     setProcessando(false);
-    mostrarErro('Erro ao enviar audio: ' + err.message);
+    mostrarErro('Erro: ' + err.message);
   }
 });
