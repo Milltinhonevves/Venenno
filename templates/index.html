@@ -4,24 +4,9 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
-  <meta http-equiv="Pragma" content="no-cache">
   <title>Venenno</title>
-  <link rel="manifest" href="/static/manifest.json">
   <meta name="theme-color" content="#00ff88">
-  <link rel="stylesheet" href="/static/css/style.css?v=11">
-  <script>
-    // Remove TODOS os service workers e caches antes de tudo
-    (async function() {
-      if ("serviceWorker" in navigator) {
-        const regs = await navigator.serviceWorker.getRegistrations();
-        for (const r of regs) await r.unregister();
-      }
-      if ("caches" in window) {
-        const keys = await caches.keys();
-        for (const k of keys) await caches.delete(k);
-      }
-    })();
-  </script>
+  <link rel="stylesheet" href="/static/css/style.css?v=12">
 </head>
 <body>
 
@@ -31,7 +16,6 @@
 </header>
 
 <div class="container">
-<form id="form-venenno">
 
   <!-- GRAVADOR -->
   <div class="card">
@@ -40,7 +24,6 @@
       <button type="button" class="btn-mic" id="btn-mic">🎙️</button>
       <div class="timer" id="timer">00:00</div>
       <div class="status-rec" id="status-rec">Toque no microfone para gravar</div>
-
       <div class="preview-box" id="preview-box" hidden>
         <audio id="preview-audio" controls></audio>
         <div class="btns-rec">
@@ -49,7 +32,6 @@
           <button type="button" class="btn btn-secundario" id="btn-reusar"   hidden>♻️ Reusar</button>
         </div>
       </div>
-
       <div style="width:100%;text-align:center;color:#555;font-size:.8rem;margin-top:8px">— ou —</div>
       <label class="btn btn-secundario" style="width:100%;text-align:center;margin-top:4px">
         📂 Selecionar arquivo
@@ -84,10 +66,9 @@
         </select>
       </div>
     </div>
-
     <div class="slider-group">
       <div class="slider-header"><span>INTENSIDADE</span><span id="val-strength">80%</span></div>
-      <input type="range" name="strength" id="strength" min="0" max="100" value="80"
+      <input type="range" name="strength" min="0" max="100" value="80"
              oninput="document.getElementById('val-strength').textContent=this.value+'%'">
     </div>
   </div>
@@ -123,12 +104,10 @@
   </div>
 
   <!-- BOTÃO -->
-  <button type="submit" class="btn btn-primario" id="btn-processar" disabled>
+  <button type="button" class="btn btn-primario" id="btn-processar" disabled>
     <span id="btn-texto">🐍 Aplicar Venenno</span>
     <span id="btn-loading" hidden><span class="spinner"></span> Processando...</span>
   </button>
-
-</form>
 
   <!-- RESULTADO -->
   <div class="resultado-card" id="resultado" hidden>
@@ -144,11 +123,6 @@
 
 <footer>🐍 VENENNO — por Miltinho Neves</footer>
 
-<script src="/static/js/main.js?v=11"></script>
-<script>
-  if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.register("/static/sw.js?v=11");
-  }
-</script>
+<script src="/static/js/main.js?v=12"></script>
 </body>
 </html>
