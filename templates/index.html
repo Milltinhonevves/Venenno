@@ -1,17 +1,6 @@
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
-<script>
-// Força atualização do service worker
-if ("serviceWorker" in navigator) {
-  navigator.serviceWorker.getRegistrations().then(regs => {
-    regs.forEach(r => r.update());
-  });
-  caches.keys().then(keys => {
-    keys.forEach(k => { if (!k.includes("venenno-v9")) caches.delete(k); });
-  });
-}
-</script>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
@@ -19,6 +8,13 @@ if ("serviceWorker" in navigator) {
   <link rel="manifest" href="/static/manifest.json">
   <meta name="theme-color" content="#00ff88">
   <link rel="stylesheet" href="/static/css/style.css">
+  <script>
+    // Limpa cache antigo
+    if ("serviceWorker" in navigator) {
+      caches.keys().then(keys => keys.forEach(k => caches.delete(k)));
+      navigator.serviceWorker.getRegistrations().then(regs => regs.forEach(r => r.unregister()));
+    }
+  </script>
 </head>
 <body>
 
@@ -28,51 +24,27 @@ if ("serviceWorker" in navigator) {
 </header>
 
 <div class="container">
+<form id="form-venenno">
 
   <!-- GRAVADOR -->
   <div class="card">
     <h2>🎙️ Gravador</h2>
     <div class="gravador">
-      
-        <div class="ctrl">
-          <label class="lbl">Redução de Ruído <span id="ruido-val">0%</span></label>
-          <input type="range" name="reducao_ruido" id="reducao_ruido" min="0" max="1" step="0.05" value="0"
-            oninput="document.getElementById('ruido-val').textContent = Math.round(this.value*100)+'%'">
-        </div>
-        
-        <div class="eq-section">
-          <p class="eq-titulo">🎛️ Equalizador</p>
-          <div class="ctrl">
-            <label class="lbl">Graves (100Hz) <span id="eq-graves-val">0dB</span></label>
-            <input type="range" name="eq_graves" id="eq_graves" min="-12" max="12" step="1" value="0"
-              oninput="document.getElementById('eq-graves-val').textContent = this.value+'dB'">
-          </div>
-          <div class="ctrl">
-            <label class="lbl">Médios (1kHz) <span id="eq-medios-val">0dB</span></label>
-            <input type="range" name="eq_medios" id="eq_medios" min="-12" max="12" step="1" value="0"
-              oninput="document.getElementById('eq-medios-val').textContent = this.value+'dB'">
-          </div>
-          <div class="ctrl">
-            <label class="lbl">Agudos (8kHz) <span id="eq-agudos-val">0dB</span></label>
-            <input type="range" name="eq_agudos" id="eq_agudos" min="-12" max="12" step="1" value="0"
-              oninput="document.getElementById('eq-agudos-val').textContent = this.value+'dB'">
-          </div>
-        </div>
-        <button class="btn-mic" id="btn-mic">🎙️</button>
+      <button type="button" class="btn-mic" id="btn-mic">🎙️</button>
       <div class="timer" id="timer">00:00</div>
       <div class="status-rec" id="status-rec">Toque no microfone para gravar</div>
 
       <div class="preview-box" id="preview-box" hidden>
         <audio id="preview-audio" controls></audio>
         <div class="btns-rec">
-          <button class="btn btn-secundario" id="btn-regravar" hidden>🔄 Regravar</button>
-          <button class="btn btn-perigo"     id="btn-apagar"   hidden>🗑️ Apagar</button>
-          <button class="btn btn-secundario" id="btn-reusar"   hidden>♻️ Reusar</button>
+          <button type="button" class="btn btn-secundario" id="btn-regravar" hidden>🔄 Regravar</button>
+          <button type="button" class="btn btn-perigo"     id="btn-apagar"   hidden>🗑️ Apagar</button>
+          <button type="button" class="btn btn-secundario" id="btn-reusar"   hidden>♻️ Reusar</button>
         </div>
       </div>
 
-      <div style="width:100%;text-align:center;color:#555;font-size:.8rem;margin-top:4px">— ou —</div>
-      <label class="btn btn-secundario" style="width:100%;text-align:center">
+      <div style="width:100%;text-align:center;color:#555;font-size:.8rem;margin-top:8px">— ou —</div>
+      <label class="btn btn-secundario" style="width:100%;text-align:center;margin-top:4px">
         📂 Selecionar arquivo
         <input type="file" id="audio-input" accept="audio/*" style="display:none">
       </label>
@@ -82,23 +54,16 @@ if ("serviceWorker" in navigator) {
   <!-- AFINAÇÃO -->
   <div class="card">
     <h2>🎵 Afinação</h2>
-
     <div class="row2">
       <div>
         <label class="lbl">Tônica</label>
         <select name="tonica">
-          <option value="C">C</option>
-          <option value="C#">C#</option>
-          <option value="D">D</option>
-          <option value="D#">D#</option>
-          <option value="E">E</option>
-          <option value="F">F</option>
-          <option value="F#">F#</option>
-          <option value="G" selected>G</option>
-          <option value="G#">G#</option>
-          <option value="A">A</option>
-          <option value="A#">A#</option>
-          <option value="B">B</option>
+          <option value="C">C</option><option value="C#">C#</option>
+          <option value="D">D</option><option value="D#">D#</option>
+          <option value="E">E</option><option value="F">F</option>
+          <option value="F#">F#</option><option value="G" selected>G</option>
+          <option value="G#">G#</option><option value="A">A</option>
+          <option value="A#">A#</option><option value="B">B</option>
         </select>
       </div>
       <div>
@@ -114,62 +79,49 @@ if ("serviceWorker" in navigator) {
     </div>
 
     <div class="slider-group">
-      <div class="slider-header">
-        <span>INTENSIDADE</span>
-        <span id="val-strength">50%</span>
-      </div>
-      <input type="range" name="strength" id="strength" min="0" max="100" value="50"
+      <div class="slider-header"><span>INTENSIDADE</span><span id="val-strength">80%</span></div>
+      <input type="range" name="strength" id="strength" min="0" max="100" value="80"
              oninput="document.getElementById('val-strength').textContent=this.value+'%'">
     </div>
+  </div>
 
+  <!-- EQ -->
+  <div class="card">
+    <h2>🎛️ Equalizador</h2>
     <div class="slider-group">
-      <div class="slider-header">
-        <span>SUAVIZAÇÃO</span>
-        <span id="val-smoothing">50%</span>
-      </div>
-      <input type="range" name="smoothing" id="smoothing" min="0" max="100" value="50"
-             oninput="document.getElementById('val-smoothing').textContent=this.value+'%'">
+      <div class="slider-header"><span>GRAVES (100Hz)</span><span id="eq-graves-val">0dB</span></div>
+      <input type="range" name="eq_graves" id="eq_graves" min="-12" max="12" step="1" value="0"
+        oninput="document.getElementById('eq-graves-val').textContent=this.value+'dB'">
+    </div>
+    <div class="slider-group">
+      <div class="slider-header"><span>MÉDIOS (1kHz)</span><span id="eq-medios-val">0dB</span></div>
+      <input type="range" name="eq_medios" id="eq_medios" min="-12" max="12" step="1" value="0"
+        oninput="document.getElementById('eq-medios-val').textContent=this.value+'dB'">
+    </div>
+    <div class="slider-group">
+      <div class="slider-header"><span>AGUDOS (8kHz)</span><span id="eq-agudos-val">0dB</span></div>
+      <input type="range" name="eq_agudos" id="eq_agudos" min="-12" max="12" step="1" value="0"
+        oninput="document.getElementById('eq-agudos-val').textContent=this.value+'dB'">
     </div>
   </div>
 
   <!-- EFEITOS -->
   <div class="card">
     <h2>🎚️ Efeitos</h2>
-
     <div class="slider-group">
-      <div class="slider-header">
-        <span>REVERB</span>
-        <span id="val-reverb">0%</span>
-      </div>
-      <input type="range" name="reverb" id="reverb" min="0" max="100" value="0"
-             oninput="document.getElementById('val-reverb').textContent=this.value+'%'">
-    </div>
-
-    <div class="toggles">
-      <label class="toggle-item">
-        <span class="switch">
-          <input type="checkbox" name="chorus" value="true" id="chorus" checked>
-          <span class="slider-sw"></span>
-        </span>
-        Chorus
-      </label>
-      <label class="toggle-item">
-        <span class="switch">
-          <input type="checkbox" name="compressor" value="true" id="compressor">
-          <span class="slider-sw"></span>
-        </span>
-        Compressor
-      </label>
+      <div class="slider-header"><span>REDUÇÃO DE RUÍDO</span><span id="ruido-val">0%</span></div>
+      <input type="range" name="reducao_ruido" id="reducao_ruido" min="0" max="1" step="0.05" value="0"
+        oninput="document.getElementById('ruido-val').textContent=Math.round(this.value*100)+'%'">
     </div>
   </div>
 
-  <!-- BOTÃO PROCESSAR -->
-  <form id="form-venenno">
-    <button type="submit" class="btn btn-primario" id="btn-processar" disabled>
-      <span id="btn-texto">🐍 Aplicar Venenno</span>
-      <span id="btn-loading" hidden><span class="spinner"></span> Processando...</span>
-    </button>
-  </form>
+  <!-- BOTÃO -->
+  <button type="submit" class="btn btn-primario" id="btn-processar" disabled>
+    <span id="btn-texto">🐍 Aplicar Venenno</span>
+    <span id="btn-loading" hidden><span class="spinner"></span> Processando...</span>
+  </button>
+
+</form>
 
   <!-- RESULTADO -->
   <div class="resultado-card" id="resultado" hidden>
@@ -181,32 +133,15 @@ if ("serviceWorker" in navigator) {
   <!-- ERRO -->
   <div class="erro-card" id="erro" hidden></div>
 
-</div><!-- /container -->
+</div>
 
 <footer>🐍 VENENNO — por Miltinho Neves</footer>
 
+<script src="/static/js/main.js?v=10"></script>
 <script>
-// Converte sliders 0-100 para 0.0-1.0 antes de enviar
-document.getElementById('form-venenno').addEventListener('formdata', e => {
-  const fd = e.formData;
-  fd.set('strength',  (parseInt(fd.get('strength')  || 50) / 100).toFixed(2));
-  fd.set('smoothing', (parseInt(fd.get('smoothing') || 50) / 100).toFixed(2));
-  fd.set('reverb',    (parseInt(fd.get('reverb')    ||  0) / 100).toFixed(2));
-  fd.set('chorus',    document.getElementById('chorus').checked     ? 'true' : 'false');
-  fd.set('compressor',document.getElementById('compressor').checked ? 'true' : 'false');
-});
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.register("/static/sw.js");
+  }
 </script>
-
-<script src="/static/js/main.js"></script>
-
-<script>
-// PWA
-if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.getRegistrations()
-    .then(regs => Promise.all(regs.map(r => r.unregister())))
-    .then(() => navigator.serviceWorker.register('/static/sw.js'));
-}
-</script>
-
 </body>
 </html>
