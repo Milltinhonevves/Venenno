@@ -1,27 +1,30 @@
-const CACHE = "venenno-v10";
-const ASSETS = ["/", "/static/css/style.css", "/static/js/main.js"];
+// SW v11 — não intercepta POST/processar
+const CACHE = 'venenno-v11';
 
-self.addEventListener("install", e => {
-  e.waitUntil(
-    caches.open(CACHE).then(c => c.addAll(ASSETS)).then(() => self.skipWaiting())
-  );
+self.addEventListener('install', e => {
+  self.skipWaiting();
 });
 
-self.addEventListener("activate", e => {
+self.addEventListener('activate', e => {
   e.waitUntil(
     caches.keys().then(keys =>
-      Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k)))
+      Promise.all(keys.map(k => caches.delete(k)))
     ).then(() => self.clients.claim())
   );
 });
 
-self.addEventListener("fetch", e => {
-  if (e.request.method !== "GET") return;
+// Nunca cacheia POST — passa direto pro servidor
+self.addEventListener('fetch', e => {
+  if (e.request.method !== 'GET') return;
+  if (e.request.url.includes('/processar')) return;
+  if (e.request.url.includes('/download')) return;
+  // Só cacheia assets estáticos
   e.respondWith(
-    fetch(e.request).then(res => {
-      const clone = res.clone();
-      caches.open(CACHE).then(c => c.put(e.request, clone));
-      return res;
-    }).catch(() => caches.match(e.request))
+    caches.open(CACHE).then(cache =>
+      fetch(e.request).then(resp => {
+        cache.put(e.request, resp.clone());
+        return resp;
+      }).catch(() => caches.match(e.request))
+    )
   );
 });
