@@ -39,9 +39,21 @@ function mostrarResultado(url) {
   const erro = document.getElementById('erro');
   if (erro) erro.hidden = true;
   if (el) el.hidden = false;
+
+  // Cria um player novo do zero pra garantir que toca
+  const velho = document.getElementById('player');
+  if (velho) velho.remove();
+  const audio = document.createElement('audio');
+  audio.id = 'player';
+  audio.controls = true;
+  audio.autoplay = true;
+  audio.src = url + '?t=' + Date.now();
+  audio.type = 'audio/mpeg';
+  el.insertBefore(audio, dl);
+  audio.load();
+  audio.play().catch(() => {});
+
   if (dl) { dl.href = url; dl.download = 'venenno.mp3'; }
-  // Abre MP3 direto no player nativo do Android
-  window.open(url, '_blank');
   const btnReusar = document.getElementById('btn-reusar');
   if (btnReusar && blobGravado) btnReusar.hidden = false;
 }
