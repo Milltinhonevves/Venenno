@@ -144,6 +144,74 @@ def pitch_shift_melhor(y, sr, n_steps):
     print(f'[pitch_shift] steps={n_steps:.3f}')
     result = librosa.effects.pitch_shift(y=y, sr=sr, n_steps=float(n_steps))
     return result.astype(np.float32)
+
+
+def autotune_frame_a_frame(y, sr, tonica, escala, strength=0.8):
+    """
+    Autotune estilo Melodyne: detecta e corrige o pitch frame a frame.
+    Divide o audio em janelas de 50ms, detecta pitch de cada uma,
+    corrige para a nota mais proxima da escala escolhida.
+    """
+    hop = int(sr * 0.05)   # janela de 50ms
+    win = hop * 2          # overlap de 50%
+    escala_midi = gerar_escala(tonica, escala)
+
+    # pyin frame a frame
+    try:
+        f0, voiced, _ = librosa.pyin(
+            y,
+            fmin=float(librosa.note_to_hz('C2')),
+            fmax=float(librosa.note_to_hz('C7')),
+            sr=sr,
+            frame_length=win,
+            hop_length=hop
+        )
+    except Exception as e:
+        print(f'[autotune ff] pyin falhou: {e}')
+        return y
+
+    n_frames = len(f0)
+    print(f'[autotune ff] {n_frames} frames, voiced={np.sum(voiced)}')
+
+    if np.sum(voiced) == 0:
+        print('[autotune ff] nenhuma voz detectada')
+        return y
+
+    # Cria saida com overlap-add
+    out = np.zeros_like(y)
+    counts = np.zeros_like(y)
+    window = np.hanning(win)
+
+    for i in range(n_frames):
+        start = i * hop
+        end   = start + win
+        if end > len(y):
+            break
+
+        seg = y[start:end].copy()
+
+        if voiced[i] and not np.isnan(f0[i]) and f0[i] > 60:
+            midi_atual = freq_para_midi(f0[i])
+            midi_alvo  = nota_mais_proxima(midi_atual, escala_midi)
+            n_steps    = (midi_alvo - midi_atual) * strength
+
+            if abs(n_steps) > 0.05:
+                try:
+                    seg = librosa.effects.pitch_shift(
+                        y=seg, sr=sr, n_steps=float(n_steps)
+                    ).astype(np.float32)
+                except Exception:
+                    pass  # mantém seg original se falhar
+
+        seg_win = seg * window
+        out[start:end]    += seg_win
+        counts[start:end] += window
+
+    # Normaliza onde houve sobreposição
+    mask = counts > 1e-6
+    out[mask] /= counts[mask]
+
+    return out.astype(np.float32)
 def index():
     return render_template('index.html')
 
@@ -207,32 +275,10 @@ def processar():
             print(f'[pyin] frames_validos={len(validos)}')
         except Exception as ep:
             print(f'[pyin erro] {ep} — fallback yin')
-            # Detecta pitch da voz com pyin (mais preciso)
-        try:
-            f0, voiced_flag, _ = librosa.pyin(y,
-                fmin=float(librosa.note_to_hz('C2')),
-                fmax=float(librosa.note_to_hz('C7')),
-                sr=sr_a, frame_length=2048, hop_length=512)
-            validos = f0[voiced_flag & ~np.isnan(f0) & (f0 > 60) & (f0 < 1200)]
-            print(f'[pyin] frames_validos={len(validos)}')
-        except Exception as ep:
-            print(f'[pyin erro] {ep} — fallback yin')
-            f0 = librosa.yin(y,
-                fmin=float(librosa.note_to_hz('C2')),
-                fmax=float(librosa.note_to_hz('C7')),
-                sr=sr_a, frame_length=1024, hop_length=256)
-            validos = f0[(f0 > 60) & (f0 < 1200) & ~np.isnan(f0)]
-
-        if len(validos) > 0:
-            pitch       = float(np.median(validos))
-            escala_midi = gerar_escala(tonica, escala)
-            midi_atual  = freq_para_midi(pitch)
-            midi_alvo   = nota_mais_proxima(midi_atual, escala_midi)
-            n_steps     = (midi_alvo - midi_atual) * strength
-            print(f'[autotune] pitch={pitch:.1f}Hz midi_atual={midi_atual:.2f} midi_alvo={midi_alvo:.2f} steps={n_steps:.3f}')
-            y = pitch_shift_melhor(y, sr_a, n_steps)
-        else:
-            print('[autotune] nenhum pitch detectado na voz')
+            # Autotune frame a frame (estilo Melodyne)
+        print('[autotune ff] iniciando...')
+        y = autotune_frame_a_frame(y, sr_a, tonica, escala, strength)
+        print('[autotune ff] concluido')
             fator = 10 ** (2.0 / 20.0)
             y = np.clip(y * fator, -1.0, 1.0).astype(np.float32)
             wav_out = os.path.join(app.config['PROCESSED_FOLDER'], f'tmp_{uid}.wav')
