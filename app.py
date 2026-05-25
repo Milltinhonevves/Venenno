@@ -322,10 +322,15 @@ def iniciar():
                 y = pitch_shift_melhor(y, sr_audio, n_steps)
             fator = 10 ** (2.0 / 20.0)
             y = np.clip(y * fator, -1.0, 1.0).astype(np.float32)
-            out_wav = os.path.join(app.config['PROCESSED_FOLDER'], uid + '_out.wav')
-            tmp.append(out_wav)
-            sf.write(out_wav, y, sr_audio)
-            audio_b64 = wav_para_mp3_b64(out_wav)
+            wav_out = os.path.join(app.config['PROCESSED_FOLDER'], f'tmp_{uid}.wav')
+            mp3_out = os.path.join(app.config['PROCESSED_FOLDER'], f'venenno_{uid}.mp3')
+            tmp.append(wav_out)
+            sf.write(wav_out, y, sr_audio)
+            wav_para_mp3(wav_out, mp3_out)
+            with open(mp3_out, 'rb') as ff:
+                audio_b64 = base64.b64encode(ff.read()).decode('utf-8')
+            try: os.remove(mp3_out)
+            except: pass
             _jobs[uid] = {'status': 'done', 'audio_b64': audio_b64}
             print(f'[bg] job={uid} concluido b64={len(audio_b64)}')
         except Exception as e:
