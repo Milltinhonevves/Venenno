@@ -17,8 +17,8 @@ function getMime() {
 }
 
 function formatTime(ms) {
-  const s = Math.floor(ms/1000);
-  return String(Math.floor(s/60)).padStart(2,'0') + ':' + String(s%60).padStart(2,'0');
+  const s = Math.floor(ms / 1000);
+  return String(Math.floor(s / 60)).padStart(2,'0') + ':' + String(s % 60).padStart(2,'0');
 }
 
 function setStatus(txt, cor) {
@@ -28,176 +28,182 @@ function setStatus(txt, cor) {
 
 function mostrarErro(msg) {
   const el = document.getElementById('erro');
-  if (el) { el.textContent = '❌ ' + msg; el.hidden = false; }
+  if (el) { el.textContent = 'Erro: ' + msg; el.hidden = false; }
   const res = document.getElementById('resultado');
   if (res) res.hidden = true;
 }
 
 function mostrarResultado(url) {
-  const el = document.getElementById('resultado');
-  const dl = document.getElementById('btn-download');
-  const erro = document.getElementById('erro');
-  if (erro) erro.hidden = true;
-  if (el) el.hidden = false;
+  const el  = document.getElementById('resultado');
+  const dl  = document.getElementById('btn-download');
+  const err = document.getElementById('erro');
+  if (err) err.hidden = true;
+  if (el)  el.hidden  = false;
 
-  // Cria um player novo do zero pra garantir que toca
   const velho = document.getElementById('player');
   if (velho) velho.remove();
+
   const audio = document.createElement('audio');
-  audio.id = 'player';
+  audio.id       = 'player';
   audio.controls = true;
-  audio.autoplay = true;
-  audio.src = url + '?t=' + Date.now();
-  audio.type = 'audio/mpeg';
+  audio.src      = url + '?t=' + Date.now();
   el.insertBefore(audio, dl);
   audio.load();
-  audio.play().catch(() => {});
+  audio.play().catch(function(){});
 
   if (dl) { dl.href = url; dl.download = 'venenno.mp3'; }
-  const btnReusar = document.getElementById('btn-reusar');
-  if (btnReusar && blobGravado) btnReusar.hidden = false;
-}
+
   const btnReusar = document.getElementById('btn-reusar');
   if (btnReusar && blobGravado) btnReusar.hidden = false;
 }
 
 function setProcessando(sim) {
-  const btn = document.getElementById('btn-processar');
-  const txt = document.getElementById('btn-texto');
+  const btn  = document.getElementById('btn-processar');
+  const txt  = document.getElementById('btn-texto');
   const load = document.getElementById('btn-loading');
-  if (btn) btn.disabled = sim;
-  if (txt) txt.hidden = sim;
-  if (load) load.hidden = !sim;
+  if (btn)  btn.disabled  = sim;
+  if (txt)  txt.hidden    = sim;
+  if (load) load.hidden   = !sim;
 }
 
 function resetGravador() {
   arquivoAtual = null;
-  blobGravado = null;
-  const previewBox = document.getElementById('preview-box');
+  blobGravado  = null;
+  const previewBox   = document.getElementById('preview-box');
   const previewAudio = document.getElementById('preview-audio');
   const btnProcessar = document.getElementById('btn-processar');
-  if (previewBox) previewBox.hidden = true;
-  if (previewAudio) previewAudio.src = '';
+  if (previewBox)   previewBox.hidden   = true;
+  if (previewAudio) previewAudio.src    = '';
   if (btnProcessar) btnProcessar.disabled = true;
   document.getElementById('timer').textContent = '00:00';
   setStatus('Toque no microfone para gravar');
-  ['btn-regravar','btn-apagar','btn-reusar'].forEach(id => {
+  ['btn-regravar','btn-apagar','btn-reusar'].forEach(function(id) {
     const el = document.getElementById(id);
     if (el) el.hidden = true;
   });
 }
 
-// Microfone
-document.getElementById('btn-mic').addEventListener('click', async () => {
+// === MICROFONE ===
+document.getElementById('btn-mic').addEventListener('click', async function() {
   if (gravando) {
     if (mediaRecorder && mediaRecorder.state !== 'inactive') mediaRecorder.stop();
     return;
   }
   try {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    const mime = getMime();
+    const mime   = getMime();
     chunks = [];
-    mediaRecorder = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
-    mediaRecorder.ondataavailable = e => { if (e.data && e.data.size > 0) chunks.push(e.data); };
-    mediaRecorder.onstop = () => {
+    mediaRecorder = mime
+      ? new MediaRecorder(stream, { mimeType: mime })
+      : new MediaRecorder(stream);
+
+    mediaRecorder.ondataavailable = function(e) {
+      if (e.data && e.data.size > 0) chunks.push(e.data);
+    };
+
+    mediaRecorder.onstop = function() {
       const realMime = mediaRecorder.mimeType || mime || 'audio/webm';
-      const ext = realMime.includes('ogg') ? 'ogg' : realMime.includes('mp4') ? 'mp4' : 'webm';
-      blobGravado = new Blob(chunks, { type: realMime });
-      arquivoAtual = new File([blobGravado], 'gravacao.' + ext, { type: realMime });
-      stream.getTracks().forEach(t => t.stop());
+      const ext      = realMime.includes('ogg') ? 'ogg' : realMime.includes('mp4') ? 'mp4' : 'webm';
+      blobGravado    = new Blob(chunks, { type: realMime });
+      arquivoAtual   = new File([blobGravado], 'gravacao.' + ext, { type: realMime });
+      stream.getTracks().forEach(function(t) { t.stop(); });
       clearInterval(timerInterval);
       gravando = false;
+
       const btnMic = document.getElementById('btn-mic');
       btnMic.classList.remove('gravando');
       btnMic.textContent = '🎙️';
-      const previewBox = document.getElementById('preview-box');
+
+      const previewBox   = document.getElementById('preview-box');
       const previewAudio = document.getElementById('preview-audio');
       const btnProcessar = document.getElementById('btn-processar');
-      if (previewBox) previewBox.hidden = false;
-      if (previewAudio) previewAudio.src = URL.createObjectURL(blobGravado);
-      if (btnProcessar) btnProcessar.disabled = false;
-      ['btn-regravar','btn-apagar'].forEach(id => {
-        const el = document.getElementById(id);
-        if (el) el.hidden = false;
-      });
-      setStatus('✅ Gravação pronta!', '#00ff88');
+      if (previewBox)   previewBox.hidden      = false;
+      if (previewAudio) previewAudio.src        = URL.createObjectURL(blobGravado);
+      if (btnProcessar) btnProcessar.disabled   = false;
+
+      document.getElementById('btn-regravar').hidden = false;
+      document.getElementById('btn-apagar').hidden   = false;
+      setStatus('Gravacao pronta!', '#00ff88');
     };
+
     mediaRecorder.start(200);
-    gravando = true;
+    gravando  = true;
     startTime = Date.now();
     const btnMic = document.getElementById('btn-mic');
     btnMic.classList.add('gravando');
     btnMic.textContent = '⏹️';
-    timerInterval = setInterval(() => {
+    timerInterval = setInterval(function() {
       document.getElementById('timer').textContent = formatTime(Date.now() - startTime);
     }, 500);
-    setStatus('🔴 Gravando... toque para parar', '#ff3355');
-  } catch (err) {
+    setStatus('Gravando... toque para parar', '#ff3355');
+  } catch(err) {
     mostrarErro('Microfone: ' + err.message);
   }
 });
 
-// Botões
-const btnReg = document.getElementById('btn-regravar');
+// === BOTOES GRAVADOR ===
+var btnReg = document.getElementById('btn-regravar');
 if (btnReg) btnReg.addEventListener('click', resetGravador);
-const btnAp = document.getElementById('btn-apagar');
+
+var btnAp = document.getElementById('btn-apagar');
 if (btnAp) btnAp.addEventListener('click', resetGravador);
-const btnReusar = document.getElementById('btn-reusar');
-if (btnReusar) btnReusar.addEventListener('click', () => {
+
+var btnReusar = document.getElementById('btn-reusar');
+if (btnReusar) btnReusar.addEventListener('click', function() {
   if (blobGravado) {
     arquivoAtual = new File([blobGravado], arquivoAtual.name, { type: arquivoAtual.type });
-    btnReusar.hidden = true;
+    document.getElementById('btn-reusar').hidden = true;
     document.getElementById('btn-processar').disabled = false;
-    setStatus('✅ Pronto para processar de novo!', '#00ff88');
+    setStatus('Pronto para processar de novo!', '#00ff88');
   }
 });
 
-// Selecionar arquivo
-const audioInput = document.getElementById('audio-input');
-if (audioInput) audioInput.addEventListener('change', () => {
+// === UPLOAD DE ARQUIVO ===
+var audioInput = document.getElementById('audio-input');
+if (audioInput) audioInput.addEventListener('change', function() {
   if (audioInput.files.length > 0) {
     arquivoAtual = audioInput.files[0];
-    blobGravado = null;
-    const previewBox = document.getElementById('preview-box');
+    blobGravado  = null;
+    const previewBox   = document.getElementById('preview-box');
     const previewAudio = document.getElementById('preview-audio');
     const btnProcessar = document.getElementById('btn-processar');
-    if (previewBox) previewBox.hidden = false;
-    if (previewAudio) previewAudio.src = URL.createObjectURL(arquivoAtual);
+    if (previewBox)   previewBox.hidden    = false;
+    if (previewAudio) previewAudio.src     = URL.createObjectURL(arquivoAtual);
     if (btnProcessar) btnProcessar.disabled = false;
-    setStatus('📂 ' + arquivoAtual.name, '#00ff88');
+    setStatus(arquivoAtual.name, '#00ff88');
   }
 });
 
-// PROCESSAR — sem form submit, botão direto
-document.getElementById('btn-processar').addEventListener('click', async (e) => {
+// === PROCESSAR ===
+document.getElementById('btn-processar').addEventListener('click', async function(e) {
   e.preventDefault();
-  e.stopPropagation();
 
   if (!arquivoAtual) {
-    mostrarErro('Grave ou selecione um áudio primeiro!');
+    mostrarErro('Grave ou selecione um audio primeiro!');
     return;
   }
 
-  document.getElementById('erro').hidden = true;
+  document.getElementById('erro').hidden      = true;
   document.getElementById('resultado').hidden = true;
   setProcessando(true);
 
-  const fd = new FormData();
-  fd.append('audio', arquivoAtual, arquivoAtual.name);
-  fd.append('tonica',        document.querySelector('[name=tonica]').value);
-  fd.append('escala',        document.querySelector('[name=escala]').value);
-  fd.append('strength',      (parseInt(document.querySelector('[name=strength]').value) / 100).toFixed(2));
-  fd.append('reducao_ruido', document.querySelector('[name=reducao_ruido]').value);
-  fd.append('eq_graves',     document.querySelector('[name=eq_graves]').value);
-  fd.append('eq_medios',     document.querySelector('[name=eq_medios]').value);
-  fd.append('eq_agudos',     document.querySelector('[name=eq_agudos]').value);
+  var fd = new FormData();
+  fd.append('audio',        arquivoAtual, arquivoAtual.name);
+  fd.append('tonica',       document.querySelector('[name=tonica]').value);
+  fd.append('escala',       document.querySelector('[name=escala]').value);
+  fd.append('strength',     (parseInt(document.querySelector('[name=strength]').value) / 100).toFixed(2));
+  fd.append('reducao_ruido',document.querySelector('[name=reducao_ruido]').value);
+  fd.append('eq_graves',    document.querySelector('[name=eq_graves]').value);
+  fd.append('eq_medios',    document.querySelector('[name=eq_medios]').value);
+  fd.append('eq_agudos',    document.querySelector('[name=eq_agudos]').value);
 
   try {
-    const resp = await fetch('/processar', { method: 'POST', body: fd });
-    const texto = await resp.text();
-    let data;
+    var resp  = await fetch('/processar', { method: 'POST', body: fd });
+    var texto = await resp.text();
+    var data;
     try { data = JSON.parse(texto); } catch(_) {
-      mostrarErro('Resposta inválida: ' + texto.substring(0,100));
+      mostrarErro('Resposta invalida: ' + texto.substring(0,100));
+      setProcessando(false);
       return;
     }
     if (data.sucesso) {
@@ -205,9 +211,8 @@ document.getElementById('btn-processar').addEventListener('click', async (e) => 
     } else {
       mostrarErro(data.erro || 'Erro desconhecido');
     }
-  } catch (err) {
+  } catch(err) {
     mostrarErro('Erro de rede: ' + err.message);
-  } finally {
-    setProcessando(false);
   }
+  setProcessando(false);
 });
