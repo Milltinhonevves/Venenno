@@ -8,7 +8,7 @@ from flask import Flask, request, jsonify, render_template, send_from_directory
 app = Flask(__name__)
 app.config['UPLOAD_FOLDER']    = '/tmp/venenno_up'
 app.config['PROCESSED_FOLDER'] = '/tmp/venenno_out'
-app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024
+app.config['MAX_CONTENT_LENGTH'] = 200 * 1024 * 1024  # 200MB
 
 os.makedirs(app.config['UPLOAD_FOLDER'],    exist_ok=True)
 os.makedirs(app.config['PROCESSED_FOLDER'], exist_ok=True)
@@ -28,7 +28,7 @@ def converter_wav(origem):
     dest = origem + '_conv.wav'
     r = subprocess.run(
         [FFMPEG,'-y','-i',origem,'-ar','22050','-ac','1','-f','wav',dest],
-        capture_output=True, timeout=120
+        capture_output=True, timeout=300
     )
     if r.returncode != 0:
         raise RuntimeError('ffmpeg erro: ' + r.stderr.decode(errors='replace')[-300:])
@@ -40,14 +40,18 @@ def gerar_escala(tonica, escala):
     return [(o+1)*12 + idx + iv for o in range(-1,9) for iv in ivs]
 
 def processar_em_chunks(y, sr, tonica, escala, strength):
-    """Processa audio em pedacos de 20s para nao travar memoria"""
-    chunk_size = 20 * sr
+    """Processa audio em pedacos de 30s — suporta qualquer duracao"""
+    chunk_size = 30 * sr
     escala_midi = gerar_escala(tonica, escala)
     resultado = []
+    total_chunks = (len(y) + chunk_size - 1) // chunk_size
+    print(f'[proc] total chunks: {total_chunks}')
 
-    for inicio in range(0, len(y), chunk_size):
+    for i, inicio in enumerate(range(0, len(y), chunk_size)):
         chunk = y[inicio:inicio + chunk_size]
-        if len(chunk) < sr:  # chunk muito pequeno, adiciona sem processar
+        print(f'[chunk {i+1}/{total_chunks}] {len(chunk)/sr:.1f}s')
+
+        if len(chunk) < int(sr * 0.5):
             resultado.append(chunk)
             continue
 
@@ -71,12 +75,11 @@ def processar_em_chunks(y, sr, tonica, escala, strength):
                 resultado.append(chunk)
                 continue
 
-            print(f'[chunk {inicio//sr}s] pitch={pitch_medio:.1f}Hz steps={n_steps:.2f}')
             chunk_afinado = librosa.effects.pitch_shift(chunk, sr=sr, n_steps=n_steps, bins_per_octave=24)
             resultado.append(chunk_afinado)
 
         except Exception as ex:
-            print(f'[chunk erro] {ex}')
+            print(f'[chunk {i+1} erro] {ex}')
             resultado.append(chunk)
 
     return np.concatenate(resultado)
@@ -94,7 +97,7 @@ def processar():
     if 'audio' not in request.files:
         return jsonify({'erro': 'Nenhum arquivo enviado'}), 400
 
-    arq  = request.files['audio']
+    arq      = request.files['audio']
     tonica   = request.form.get('tonica',   'C')
     escala   = request.form.get('escala',   'cromatica')
     strength = float(request.form.get('strength', 0.5))
@@ -106,13 +109,14 @@ def processar():
     try:
         arq.save(orig)
         tam = os.path.getsize(orig)
-        print(f'[proc] ct={arq.content_type} size={tam}')
+        print(f'[proc] size={tam} ct={arq.content_type}')
         if tam == 0:
             return jsonify({'erro': 'Arquivo vazio, tente gravar de novo.'}), 400
 
         wav = converter_wav(orig)
         y, sr = librosa.load(wav, sr=22050, mono=True)
-        print(f'[proc] duracao={len(y)/sr:.1f}s samples={len(y)} sr={sr}')
+        duracao = len(y) / sr
+        print(f'[proc] duracao={duracao:.1f}s')
 
         if len(y) == 0:
             return jsonify({'erro': 'Audio sem conteudo.'}), 400
@@ -123,7 +127,7 @@ def processar():
         nome = f'venenno_{uid}.wav'
         sf.write(os.path.join(app.config['PROCESSED_FOLDER'], nome), y3, sr)
         print(f'[proc] salvo {nome} ({len(y3)/sr:.1f}s)')
-        return jsonify({'sucesso': True, 'url': f'/download/{nome}'})
+        return jsonify({'sucesso': True, 'url': f'/download/{nome}', 'duracao': f'{duracao:.0f}s'})
 
     except Exception as e:
         print('ERRO:', traceback.format_exc())
