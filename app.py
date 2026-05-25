@@ -197,12 +197,50 @@ def autotune(y, tonica, escala, strength=0.8):
 
 # ── Ruído ───────────────────────────────────────────────────────────────────
 def eliminar_ruido(y, intensidade=0.5):
-    ruido_rms = float(np.sqrt(np.mean(y[:SR//2] ** 2))) if len(y) > SR//2 else 0.01
-    threshold = ruido_rms * (1.0 + intensidade * 3.0)
-    rms_frame = np.sqrt(np.mean(y ** 2))
-    if rms_frame < threshold:
-        return y * max(0.0, 1.0 - intensidade)
-    return y
+    """
+    Spectral gate: estima o ruido de fundo nos primeiros 0.5s (silencio),
+    depois aplica gate espectral frame a frame para suprimir frequencias
+    abaixo do limiar de ruido. Muito mais eficaz que threshold por RMS.
+    """
+    if intensidade < 0.01:
+        return y
+
+    frame_size = 512
+    hop        = 256
+
+    # Estima perfil de ruido nos primeiros 0.5s
+    n_ruido = min(len(y), int(SR * 0.5))
+    seg_ruido = y[:n_ruido] if n_ruido > frame_size else y[:frame_size]
+    espectro_ruido = np.abs(np.fft.rfft(seg_ruido[:frame_size]))
+    limiar = espectro_ruido * (1.0 + intensidade * 4.0)
+
+    # Processa frame a frame
+    n      = len(y)
+    saida  = np.zeros(n, dtype=np.float32)
+    contagem = np.zeros(n, dtype=np.float32)
+    janela = np.hanning(frame_size).astype(np.float32)
+
+    i = 0
+    while i + frame_size <= n:
+        frame  = y[i:i + frame_size] * janela
+        spec   = np.fft.rfft(frame)
+        mag    = np.abs(spec)
+        fase   = np.angle(spec)
+
+        # Gate: atenua frequencias abaixo do limiar
+        ganho  = np.where(mag > limiar, 1.0, mag / (limiar + 1e-10) * (1.0 - intensidade))
+        mag_filtrada = mag * ganho
+        spec_filtrada = mag_filtrada * np.exp(1j * fase)
+
+        frame_out = np.fft.irfft(spec_filtrada).astype(np.float32)
+        saida[i:i + frame_size]    += frame_out * janela
+        contagem[i:i + frame_size] += janela ** 2
+        i += hop
+
+    # Normaliza overlap-add
+    contagem = np.where(contagem < 1e-6, 1.0, contagem)
+    saida = saida / contagem
+    return np.clip(saida, -1.0, 1.0).astype(np.float32)
 
 # ── Rotas Flask ─────────────────────────────────────────────────────────────
 @app.route('/')
