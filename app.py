@@ -109,59 +109,44 @@ def nota_mais_proxima(midi, escala_midi):
 
 def yin_simples(seg):
     """
-    YIN vetorizado com numpy — rapido, sem loops Python.
-    Retorna frequencia fundamental estimada do segmento.
+    YIN compacto: opera em janela de 2048 amostras do centro do chunk.
+    Rapido, pouca memoria, suficiente para detectar pitch vocal.
     """
+    # Usa janela de 2048 amostras do meio do chunk
+    W = 2048
     n = len(seg)
+    if n < W:
+        trecho = seg
+    else:
+        mid = n // 2
+        trecho = seg[max(0, mid - W//2): mid + W//2]
+
+    n = len(trecho)
     if n < 256:
         return 0.0
 
-    min_tau = max(4, int(SR / 1200))   # 1200 Hz max
-    max_tau = min(n // 2, int(SR / 60)) # 60 Hz min
-
+    min_tau = max(4, int(SR / 1200))
+    max_tau = min(n // 2, int(SR / 60))
     if min_tau >= max_tau:
         return 0.0
 
-    # Difference function vetorizada via autocorrelacao (FFT)
-    # d(tau) = sum((x[t] - x[t+tau])^2) = 2*(r[0] - r[tau])
-    # onde r = autocorrelacao
-    fft_size = 1
-    while fft_size < 2 * n:
-        fft_size <<= 1
-    X   = np.fft.rfft(seg, n=fft_size)
-    acf = np.fft.irfft(X * np.conj(X))[:n].real
-    diff = np.zeros(max_tau)
-    diff[1:] = 2.0 * acf[0] - 2.0 * acf[1:max_tau]
-    diff[0]  = 0.0
+    # Difference function simples (vetorizada por slices numpy)
+    taus = np.arange(min_tau, max_tau)
+    diff = np.array([float(np.dot(trecho[:n-t]-trecho[t:], trecho[:n-t]-trecho[t:])) for t in taus])
 
-    # CMND (cumulative mean normalized difference)
-    cmnd      = np.zeros(max_tau)
-    cmnd[0]   = 1.0
-    cumsum    = np.cumsum(diff[1:max_tau])
-    taus      = np.arange(1, max_tau)
-    cmnd[1:]  = diff[1:max_tau] * taus / (cumsum + 1e-10)
+    # CMND
+    cumsum = np.cumsum(diff)
+    cmnd   = diff * taus / (cumsum + 1e-10)
 
     # Primeiro minimo abaixo do threshold
-    threshold = 0.15
-    region    = cmnd[min_tau:max_tau]
-    below     = np.where(region < threshold)[0]
+    below = np.where(cmnd < 0.15)[0]
     if len(below) > 0:
-        # Primeiro minimo local na regiao below
-        for idx in below:
-            tau = idx + min_tau
-            if tau + 1 < max_tau and cmnd[tau] <= cmnd[tau + 1]:
-                # Interpolacao parabolica
-                if tau > 0:
-                    s0, s1, s2 = cmnd[tau-1], cmnd[tau], cmnd[tau+1]
-                    denom = 2*(2*s1 - s0 - s2)
-                    tau_r = tau + (s2 - s0) / (denom + 1e-10) if abs(denom) > 1e-10 else tau
-                else:
-                    tau_r = float(tau)
-                return float(SR / tau_r) if tau_r > 0 else 0.0
+        tau = taus[below[0]]
+        return float(SR / tau) if tau > 0 else 0.0
 
-    # Fallback: minimo global
-    best = int(np.argmin(cmnd[min_tau:max_tau])) + min_tau
+    best = taus[int(np.argmin(cmnd))]
     return float(SR / best) if best > 0 else 0.0
+
 
 def pitch_shift_scipy(seg, n_steps):
     """Pitch shift via resample — zero dependencias pesadas."""
@@ -347,6 +332,10 @@ def enviar():
             wav = converter_wav(orig); tmp_files.append(wav)
             y   = carregar_audio(wav)
             print(f'[enviar] dur={len(y)/SR:.1f}s')
+            MAX_DUR = SR * 180  # maximo 3 minutos
+            if len(y) > MAX_DUR:
+                print(f'[enviar] audio muito longo, cortando em 3min')
+                y = y[:MAX_DUR]
 
             if len(y) == 0:
                 _jobs[uid] = {'status':'error','erro':'Audio sem conteudo.'}
