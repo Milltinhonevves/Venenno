@@ -148,62 +148,74 @@ def pitch_shift_melhor(y, sr, n_steps):
 
 def pitch_shift_scipy(y, sr, n_steps):
     """
-    Pitch shift ultra-leve usando apenas scipy.signal.resample.
-    Nao usa librosa.effects.pitch_shift — zero overhead de memoria.
-    n_steps: semitons (positivo = mais agudo, negativo = mais grave)
+    Pitch shift via scipy resample — ultra-leve, zero overhead de memoria.
+    Estica/comprime o audio e ajusta tamanho para manter duracao original.
     """
     if abs(n_steps) < 0.05:
         return y
-    fator = 2.0 ** (n_steps / 12.0)
-    # Resample para simular pitch: estica/comprime o audio
+    fator   = 2.0 ** (n_steps / 12.0)
     n_orig  = len(y)
     n_novo  = int(round(n_orig / fator))
-    y_novo  = scipy_resample(y, n_novo)
-    # Volta para o tamanho original (mantém duração)
-    y_final = scipy_resample(y_novo, n_orig)
+    y_shift = scipy_resample(y, n_novo)
+    y_final = scipy_resample(y_shift, n_orig)
     return y_final.astype(np.float32)
 
 
 def autotune_frame_a_frame(y, sr, tonica, escala, strength=0.8):
     """
-    Autotune ultra-leve: yin rapido + pitch_shift via scipy resample.
-    Sem librosa.effects.pitch_shift — funciona dentro do limite de memoria do Railway.
+    Autotune frame a frame com scipy (leve):
+    - Divide audio em chunks de 1 segundo
+    - Detecta pitch de cada chunk com yin (rapido)
+    - Corrige cada chunk com pitch_shift_scipy (zero memoria extra)
+    - Reconstroi audio com crossfade suave entre chunks
     """
     escala_midi = gerar_escala(tonica, escala)
+    chunk_size  = sr * 1          # 1 segundo por chunk
+    fade_size   = min(512, chunk_size // 4)
+    fade_in     = np.linspace(0, 1, fade_size).astype(np.float32)
+    fade_out    = np.linspace(1, 0, fade_size).astype(np.float32)
 
-    # Amostra de no maximo 5s para deteccao rapida
-    amostra = y[:sr * 5] if len(y) > sr * 5 else y
+    n_chunks    = max(1, int(np.ceil(len(y) / chunk_size)))
+    out         = np.zeros(len(y), dtype=np.float32)
+    print(f'[autotune ff] {n_chunks} chunks')
 
-    try:
-        f0 = librosa.yin(
-            amostra,
-            fmin=float(librosa.note_to_hz('C2')),
-            fmax=float(librosa.note_to_hz('C7')),
-            sr=sr,
-            frame_length=2048,
-            hop_length=512
-        )
-        validos = f0[(f0 > 60) & (f0 < 1200) & ~np.isnan(f0)]
-        print(f'[autotune] yin validos={len(validos)}')
-    except Exception as e:
-        print(f'[autotune] yin erro: {e}')
-        return y
+    for i in range(n_chunks):
+        start = i * chunk_size
+        end   = min(start + chunk_size, len(y))
+        seg   = y[start:end].copy()
 
-    if len(validos) == 0:
-        print('[autotune] nenhum pitch detectado')
-        return y
+        if len(seg) < 512:
+            out[start:end] += seg
+            continue
 
-    pitch   = float(np.median(validos))
-    m_atual = freq_para_midi(pitch)
-    m_alvo  = nota_mais_proxima(m_atual, escala_midi)
-    n_steps = (m_alvo - m_atual) * strength
-    print(f'[autotune] pitch={pitch:.1f}Hz steps={n_steps:.3f}')
+        # Detecta pitch do chunk com yin
+        try:
+            f0 = librosa.yin(seg,
+                fmin=float(librosa.note_to_hz('C2')),
+                fmax=float(librosa.note_to_hz('C7')),
+                sr=sr, frame_length=1024, hop_length=256)
+            validos = f0[(f0 > 60) & (f0 < 1200) & ~np.isnan(f0)]
+        except Exception:
+            validos = np.array([])
 
-    if abs(n_steps) < 0.05:
-        print('[autotune] ja afinado')
-        return y
+        if len(validos) > 0:
+            pitch   = float(np.median(validos))
+            m_atual = freq_para_midi(pitch)
+            m_alvo  = nota_mais_proxima(m_atual, escala_midi)
+            n_steps = (m_alvo - m_atual) * strength
+            print(f'[autotune ff] chunk={i} pitch={pitch:.1f}Hz steps={n_steps:.3f}')
+            if abs(n_steps) > 0.05:
+                seg = pitch_shift_scipy(seg, sr, n_steps)
 
-    return pitch_shift_scipy(y, sr, n_steps)
+        # Crossfade suave nas bordas
+        seg_len = len(seg)
+        if seg_len >= fade_size * 2:
+            seg[:fade_size]              *= fade_in
+            seg[seg_len-fade_size:seg_len] *= fade_out
+
+        out[start:end] += seg
+
+    return out
 
 
 def index():
