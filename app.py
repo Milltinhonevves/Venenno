@@ -108,35 +108,57 @@ def nota_mais_proxima(midi, escala_midi):
     return min(candidatos, key=lambda m: abs(m - midi))
 
 def yin_simples(seg):
-    """YIN simplificado: retorna frequencia fundamental estimada."""
-    n    = len(seg)
+    """
+    YIN vetorizado com numpy — rapido, sem loops Python.
+    Retorna frequencia fundamental estimada do segmento.
+    """
+    n = len(seg)
     if n < 256:
         return 0.0
-    # Differece function
-    max_tau = min(n // 2, int(SR / 60))  # maximo tau = 1/60Hz
-    min_tau = max(4, int(SR / 1200))     # minimo tau = 1/1200Hz
+
+    min_tau = max(4, int(SR / 1200))   # 1200 Hz max
+    max_tau = min(n // 2, int(SR / 60)) # 60 Hz min
+
+    if min_tau >= max_tau:
+        return 0.0
+
+    # Difference function vetorizada via autocorrelacao (FFT)
+    # d(tau) = sum((x[t] - x[t+tau])^2) = 2*(r[0] - r[tau])
+    # onde r = autocorrelacao
+    fft_size = 1
+    while fft_size < 2 * n:
+        fft_size <<= 1
+    X   = np.fft.rfft(seg, n=fft_size)
+    acf = np.fft.irfft(X * np.conj(X))[:n].real
     diff = np.zeros(max_tau)
-    for tau in range(1, max_tau):
-        d = seg[:n - tau] - seg[tau:]
-        diff[tau] = float(np.dot(d, d))
-    # Cumulative mean normalized
-    cmnd = np.zeros(max_tau)
-    cmnd[0] = 1.0
-    running = 0.0
-    for tau in range(1, max_tau):
-        running += diff[tau]
-        cmnd[tau] = diff[tau] * tau / (running + 1e-10)
-    # Primeiro minimo abaixo de threshold
+    diff[1:] = 2.0 * acf[0] - 2.0 * acf[1:max_tau]
+    diff[0]  = 0.0
+
+    # CMND (cumulative mean normalized difference)
+    cmnd      = np.zeros(max_tau)
+    cmnd[0]   = 1.0
+    cumsum    = np.cumsum(diff[1:max_tau])
+    taus      = np.arange(1, max_tau)
+    cmnd[1:]  = diff[1:max_tau] * taus / (cumsum + 1e-10)
+
+    # Primeiro minimo abaixo do threshold
     threshold = 0.15
-    for tau in range(min_tau, max_tau - 1):
-        if cmnd[tau] < threshold and cmnd[tau] < cmnd[tau + 1]:
-            # Interpolacao parabolica
-            if tau > 0:
-                s0, s1, s2 = cmnd[tau-1], cmnd[tau], cmnd[tau+1]
-                tau_refined = tau + (s2 - s0) / (2 * (2*s1 - s0 - s2) + 1e-10)
-            else:
-                tau_refined = tau
-            return float(SR / tau_refined)
+    region    = cmnd[min_tau:max_tau]
+    below     = np.where(region < threshold)[0]
+    if len(below) > 0:
+        # Primeiro minimo local na regiao below
+        for idx in below:
+            tau = idx + min_tau
+            if tau + 1 < max_tau and cmnd[tau] <= cmnd[tau + 1]:
+                # Interpolacao parabolica
+                if tau > 0:
+                    s0, s1, s2 = cmnd[tau-1], cmnd[tau], cmnd[tau+1]
+                    denom = 2*(2*s1 - s0 - s2)
+                    tau_r = tau + (s2 - s0) / (denom + 1e-10) if abs(denom) > 1e-10 else tau
+                else:
+                    tau_r = float(tau)
+                return float(SR / tau_r) if tau_r > 0 else 0.0
+
     # Fallback: minimo global
     best = int(np.argmin(cmnd[min_tau:max_tau])) + min_tau
     return float(SR / best) if best > 0 else 0.0
