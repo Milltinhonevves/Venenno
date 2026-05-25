@@ -68,9 +68,7 @@ def wav_para_mp3(wav_path, mp3_path):
 # ── Equalizer ──────────────────────────────────────────────────────────────
 def butter_filter(y, cutoff, btype, order=4):
     nyq = SR / 2.0
-    Wn  = np.clip(cutoff / nyq, 0.001, 0.999)
-    if isinstance(Wn, (list,tuple)):
-        Wn = [np.clip(w, 0.001, 0.999) for w in Wn]
+    Wn  = np.clip(np.array(cutoff, dtype=float) / nyq, 0.001, 0.999)
     sos = butter(order, Wn, btype=btype, output='sos')
     return sosfilt(sos, y).astype(np.float32)
 
