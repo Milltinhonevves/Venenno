@@ -12,7 +12,18 @@ app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024
 os.makedirs(app.config['UPLOAD_FOLDER'],    exist_ok=True)
 os.makedirs(app.config['PROCESSED_FOLDER'], exist_ok=True)
 
-FFMPEG = shutil.which('ffmpeg') or '/usr/bin/ffmpeg'
+def get_ffmpeg():
+    for p in [shutil.which('ffmpeg'), '/usr/bin/ffmpeg', '/usr/local/bin/ffmpeg',
+              '/nix/var/nix/profiles/default/bin/ffmpeg', '/run/current-system/sw/bin/ffmpeg']:
+        if p and os.path.isfile(p):
+            return p
+    # tenta achar no PATH do nix
+    try:
+        r = subprocess.run(['which','ffmpeg'], capture_output=True, text=True)
+        if r.returncode == 0 and r.stdout.strip():
+            return r.stdout.strip()
+    except: pass
+    return None
 
 NOTAS = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B']
 ESCALAS = {
@@ -24,13 +35,16 @@ ESCALAS = {
 }
 
 def converter_wav(origem):
+    ffmpeg = get_ffmpeg()
+    if not ffmpeg:
+        raise RuntimeError('ffmpeg nao encontrado no servidor.')
     dest = origem + '_conv.wav'
     r = subprocess.run(
-        [FFMPEG,'-y','-i',origem,'-ar','44100','-ac','1','-f','wav',dest],
+        [ffmpeg,'-y','-i',origem,'-ar','44100','-ac','1','-f','wav',dest],
         capture_output=True, timeout=120
     )
     if r.returncode != 0:
-        raise RuntimeError('ffmpeg: ' + r.stderr.decode(errors='replace')[-400:])
+        raise RuntimeError('ffmpeg erro: ' + r.stderr.decode(errors='replace')[-400:])
     return dest
 
 def gerar_escala(tonica, escala):
@@ -128,8 +142,12 @@ def download(nome):
 
 @app.route('/debug')
 def debug():
-    r = subprocess.run([FFMPEG,'-version'], capture_output=True, text=True)
-    return jsonify({'ffmpeg': FFMPEG, 'ok': r.returncode==0})
+    ffmpeg = get_ffmpeg()
+    info = {'ffmpeg_path': ffmpeg, 'encontrado': ffmpeg is not None}
+    if ffmpeg:
+        r = subprocess.run([ffmpeg,'-version'], capture_output=True, text=True)
+        info['version'] = r.stdout[:100]
+    return jsonify(info)
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
