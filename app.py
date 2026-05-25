@@ -26,14 +26,27 @@ ESCALAS = {
 }
 
 def converter_wav(origem):
+    """Converte qualquer formato de audio para WAV usando librosa + soundfile"""
     dest = origem + '_conv.wav'
-    r = subprocess.run(
-        [FFMPEG,'-y','-i',origem,'-ar','44100','-ac','1','-acodec','pcm_s16le','-f','wav',dest],
-        capture_output=True, timeout=300
-    )
-    if r.returncode != 0:
-        raise RuntimeError('ffmpeg: ' + r.stderr.decode(errors='replace')[-300:])
-    return dest
+    try:
+        # Tenta primeiro com librosa (suporta mp3, m4a, ogg, wav, flac, etc)
+        y, sr = librosa.load(origem, sr=44100, mono=True)
+        import soundfile as sf
+        sf.write(dest, y.astype(np.float32), sr)
+        return dest
+    except Exception as e1:
+        print(f'[librosa convert erro] {e1} - tentando ffmpeg')
+        # Fallback pro ffmpeg
+        try:
+            r = subprocess.run(
+                [FFMPEG,'-y','-i',origem,'-ar','44100','-ac','1','-acodec','pcm_s16le','-f','wav',dest],
+                capture_output=True, timeout=300
+            )
+            if r.returncode != 0:
+                raise RuntimeError('ffmpeg: ' + r.stderr.decode(errors='replace')[-300:])
+            return dest
+        except Exception as e2:
+            raise RuntimeError(f'Nao foi possivel converter o audio: {e1} / {e2}')
 
 def wav_para_mp3(wav_path, mp3_path):
     r = subprocess.run(
