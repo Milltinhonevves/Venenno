@@ -186,35 +186,34 @@ document.getElementById('btn-processar').addEventListener('click', async (e) => 
   fd.append('eq_medios',     document.querySelector('[name=eq_medios]').value);
   fd.append('eq_agudos',     document.querySelector('[name=eq_agudos]').value);
 
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 300000); // 5 min timeout
+  // Usa XMLHttpRequest (mais estavel que fetch no Android)
+  const xhr = new XMLHttpRequest();
+  xhr.open('POST', '/processar', true);
+  xhr.timeout = 300000; // 5 minutos
 
-  try {
-    const resp = await fetch('/processar', {
-      method: 'POST',
-      body: fd,
-      signal: controller.signal
-    });
-    clearTimeout(timeoutId);
-    const texto = await resp.text();
-    let data;
-    try { data = JSON.parse(texto); } catch(_) {
-      mostrarErro('Resposta inválida: ' + texto.substring(0,100));
-      return;
-    }
-    if (data.sucesso) {
-      mostrarResultado(window.location.origin + data.url, data.audio_b64);
-    } else {
-      mostrarErro(data.erro || 'Erro desconhecido');
-    }
-  } catch (err) {
-    clearTimeout(timeoutId);
-    if (err.name === 'AbortError') {
-      mostrarErro('Tempo esgotado - tente um arquivo menor ou reduza o EQ');
-    } else {
-      mostrarErro('Erro: ' + err.name + ' - ' + err.message + ' | audio=' + (arquivoAtual ? arquivoAtual.size + 'b ' + arquivoAtual.type : 'null'));
-    }
-  } finally {
+  xhr.onload = function() {
     setProcessando(false);
-  }
+    try {
+      const data = JSON.parse(xhr.responseText);
+      if (data.sucesso) {
+        mostrarResultado('', data.audio_b64);
+      } else {
+        mostrarErro(data.erro || 'Erro desconhecido');
+      }
+    } catch(e) {
+      mostrarErro('Resposta invalida: ' + xhr.responseText.substring(0, 100));
+    }
+  };
+
+  xhr.onerror = function() {
+    setProcessando(false);
+    mostrarErro('Erro de conexao. Verifique sua internet e tente novamente.');
+  };
+
+  xhr.ontimeout = function() {
+    setProcessando(false);
+    mostrarErro('Tempo esgotado. Tente um arquivo menor.');
+  };
+
+  xhr.send(fd);
 });
