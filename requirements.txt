@@ -1,0 +1,7 @@
+flask==3.0.3
+gunicorn==22.0.0
+numpy==1.26.4
+librosa==0.10.2
+soundfile==0.12.1
+pedalboard==0.9.13
+scipy==1.13.1
