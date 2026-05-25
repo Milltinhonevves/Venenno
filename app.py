@@ -224,6 +224,13 @@ def download(nome):
 def debug():
     return jsonify({'ffmpeg': FFMPEG, 'existe': os.path.isfile(FFMPEG)})
 
+@app.after_request
+def no_cache(response):
+    response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['Expires'] = '0'
+    return response
+
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(debug=False, host='0.0.0.0', port=port)
