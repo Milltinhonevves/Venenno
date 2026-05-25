@@ -3,5 +3,4 @@ gunicorn>=20.1.0
 numpy>=1.24.0
 librosa>=0.10.0
 soundfile>=0.12.0
-pedalboard>=0.7.0
 scipy>=1.10.0
