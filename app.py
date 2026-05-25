@@ -156,7 +156,11 @@ def processar():
             print(f'[autotune] pitch={pitch:.1f}Hz steps={n_steps:.3f}')
             y = pitch_shift_melhor(y, sr, n_steps)
 
-        fator = 10 ** (2.0 / 20.0)
+        # Normaliza o pico pro máximo e aplica +6dB de ganho
+        pico = np.max(np.abs(y))
+        if pico > 0:
+            y = y / pico  # normaliza pra 0dB
+        fator = 10 ** (6.0 / 20.0)  # +6dB
         y = np.clip(y * fator, -1.0, 1.0).astype(np.float32)
 
         # Salva WAV temporário e converte pra MP3
