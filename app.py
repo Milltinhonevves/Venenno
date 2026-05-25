@@ -34,15 +34,9 @@ def converter_wav(origem):
         raise RuntimeError('ffmpeg: ' + r.stderr.decode(errors='replace')[-300:])
     return dest
 
-def aplicar_eq(wav_in, graves=0, medios=0, agudos=0):
-    """
-    Equalizador 3 bandas via ffmpeg equalizer filter.
-    graves: 100Hz, medios: 1000Hz, agudos: 8000Hz
-    valores em dB (-12 a +12)
-    """
+def aplicar_eq_ffmpeg(wav_in, graves=0, medios=0, agudos=0):
     if graves == 0 and medios == 0 and agudos == 0:
         return wav_in
-
     filtros = []
     if graves != 0:
         filtros.append(f"equalizer=f=100:t=o:w=200:g={graves}")
@@ -50,44 +44,21 @@ def aplicar_eq(wav_in, graves=0, medios=0, agudos=0):
         filtros.append(f"equalizer=f=1000:t=o:w=500:g={medios}")
     if agudos != 0:
         filtros.append(f"equalizer=f=8000:t=o:w=3000:g={agudos}")
-
     wav_out = wav_in + '_eq.wav'
     r = subprocess.run(
-        [FFMPEG, '-y', '-i', wav_in,
-         '-af', ','.join(filtros),
-         '-ar', '44100', '-ac', '1', wav_out],
+        [FFMPEG,'-y','-i',wav_in,'-af',','.join(filtros),'-ar','44100','-ac','1',wav_out],
         capture_output=True, timeout=300
     )
     if r.returncode != 0:
         print(f'[eq erro] {r.stderr.decode(errors="replace")[-200:]}')
         return wav_in
-    print(f'[eq] graves={graves}dB medios={medios}dB agudos={agudos}dB')
-    return wav_out
-
-def pitch_shift_ffmpeg(wav_in, n_steps):
-    if abs(n_steps) < 0.05:
-        return wav_in
-    fator = 2 ** (n_steps / 12.0)
-    filtro = f"asetrate=44100*{fator:.6f},aresample=44100,atempo={1.0/fator:.6f}"
-    wav_out = wav_in + '_shifted.wav'
-    r = subprocess.run(
-        [FFMPEG, '-y', '-i', wav_in,
-         '-af', filtro,
-         '-ar', '44100', '-ac', '1', wav_out],
-        capture_output=True, timeout=300
-    )
-    if r.returncode != 0:
-        print(f'[pitch erro] {r.stderr.decode(errors="replace")[-200:]}')
-        return wav_in
     return wav_out
 
 def eliminar_ruido(y, sr, intensidade=0.5):
     try:
-        n_fft = 2048
-        hop   = 512
+        n_fft = 2048; hop = 512
         n_ruido = min(int(sr * 0.5), len(y) // 4)
-        ruido   = y[:n_ruido]
-        stft_ruido   = librosa.stft(ruido, n_fft=n_fft, hop_length=hop)
+        stft_ruido   = librosa.stft(y[:n_ruido], n_fft=n_fft, hop_length=hop)
         perfil_ruido = np.mean(np.abs(stft_ruido), axis=1, keepdims=True)
         stft_y = librosa.stft(y, n_fft=n_fft, hop_length=hop)
         mag    = np.abs(stft_y)
@@ -95,11 +66,9 @@ def eliminar_ruido(y, sr, intensidade=0.5):
         fator  = 1.0 + intensidade * 3.0
         mag_limpa  = np.maximum(mag - perfil_ruido * fator, mag * 0.05)
         stft_limpo = mag_limpa * np.exp(1j * fase)
-        y_limpo    = librosa.istft(stft_limpo, hop_length=hop, length=len(y))
-        return y_limpo.astype(np.float32)
+        return librosa.istft(stft_limpo, hop_length=hop, length=len(y)).astype(np.float32)
     except Exception as ex:
-        print(f'[ruido erro] {ex}')
-        return y
+        print(f'[ruido erro] {ex}'); return y
 
 def gerar_escala(tonica, escala):
     idx = NOTAS.index(tonica)
@@ -112,6 +81,23 @@ def freq_para_midi(freq):
 def nota_mais_proxima(midi_val, escala_midi):
     arr = np.array(escala_midi, dtype=float)
     return escala_midi[int(np.argmin(np.abs(arr - midi_val)))]
+
+def pitch_shift_rubberband(y, sr, n_steps):
+    """
+    Usa pyrubberband — motor profissional (mesmo do Audacity).
+    Preserva timbre, clareza e naturalidade da voz.
+    """
+    if abs(n_steps) < 0.05:
+        return y
+    try:
+        import pyrubberband as pyrb
+        ratio = 2 ** (n_steps / 12.0)
+        y_shifted = pyrb.pitch_shift(y, sr, n_steps)
+        print(f'[rubberband] steps={n_steps:.2f} ratio={ratio:.3f}')
+        return y_shifted.astype(np.float32)
+    except Exception as ex:
+        print(f'[rubberband erro] {ex} — fallback librosa')
+        return librosa.effects.pitch_shift(y, sr=sr, n_steps=n_steps, bins_per_octave=48)
 
 @app.route('/')
 def index():
@@ -136,43 +122,40 @@ def processar():
     tmp_files = []
 
     try:
-        arq.save(orig)
-        tmp_files.append(orig)
+        arq.save(orig); tmp_files.append(orig)
         if os.path.getsize(orig) == 0:
             return jsonify({'erro': 'Arquivo vazio.'}), 400
 
         # 1. Converte pra WAV 44100Hz
-        wav = converter_wav(orig)
-        tmp_files.append(wav)
+        wav = converter_wav(orig); tmp_files.append(wav)
 
-        # 2. Elimina ruído se pedido
-        if reducao_ruido > 0:
-            y, sr = librosa.load(wav, sr=44100, mono=True)
-            y = eliminar_ruido(y, sr, intensidade=reducao_ruido)
-            sf.write(wav, y, sr)
-
-        # 3. Equaliza ANTES da afinação
-        wav_eq = aplicar_eq(wav, graves=eq_graves, medios=eq_medios, agudos=eq_agudos)
-        if wav_eq != wav:
-            tmp_files.append(wav_eq)
-
-        # 4. Detecta pitch
-        y, sr = librosa.load(wav_eq, sr=44100, mono=True)
-        print(f'[proc] duracao={len(y)/sr:.1f}s strength={strength}')
-
+        # 2. Carrega áudio
+        y, sr = librosa.load(wav, sr=44100, mono=True)
+        print(f'[proc] duracao={len(y)/sr:.1f}s sr={sr}')
         if len(y) == 0:
             return jsonify({'erro': 'Audio sem conteudo.'}), 400
 
-        hop = 512
+        # 3. Elimina ruído
+        if reducao_ruido > 0:
+            y = eliminar_ruido(y, sr, intensidade=reducao_ruido)
+
+        # 4. Equaliza
+        if eq_graves != 0 or eq_medios != 0 or eq_agudos != 0:
+            wav_eq = wav + '_eq.wav'; tmp_files.append(wav_eq)
+            sf.write(wav_eq, y, sr)
+            wav_eq2 = aplicar_eq_ffmpeg(wav_eq, eq_graves, eq_medios, eq_agudos)
+            if wav_eq2 != wav_eq: tmp_files.append(wav_eq2)
+            y, sr = librosa.load(wav_eq2, sr=44100, mono=True)
+
+        # 5. Detecta pitch
         f0 = librosa.yin(y,
             fmin=float(librosa.note_to_hz('C2')),
             fmax=float(librosa.note_to_hz('C7')),
-            sr=sr, frame_length=2048, hop_length=hop)
-
+            sr=sr, frame_length=2048, hop_length=512)
         validos = f0[(f0 > 80) & (f0 < 1100) & ~np.isnan(f0)]
 
         if len(validos) == 0:
-            print('[autotune] sem pitch detectado')
+            print('[autotune] sem pitch')
             nome = f'venenno_{uid}.wav'
             sf.write(os.path.join(app.config['PROCESSED_FOLDER'], nome), y, sr)
             return jsonify({'sucesso': True, 'url': f'/download/{nome}'})
@@ -184,14 +167,10 @@ def processar():
         n_steps     = (midi_alvo - midi_atual) * strength
         print(f'[autotune] pitch={pitch:.1f}Hz steps={n_steps:.2f}')
 
-        # 5. Pitch shift via ffmpeg
-        wav_shifted = pitch_shift_ffmpeg(wav_eq, n_steps)
-        if wav_shifted != wav_eq:
-            tmp_files.append(wav_shifted)
+        # 6. Pitch shift com RUBBERBAND (qualidade profissional)
+        y_final = pitch_shift_rubberband(y, sr, n_steps)
 
-        y_final, _ = librosa.load(wav_shifted, sr=44100, mono=True)
-
-        # 6. Ganho leve
+        # 7. Ganho leve
         fator = 10 ** (2.0 / 20.0)
         y_final = np.clip(y_final * fator, -1.0, 1.0).astype(np.float32)
 
