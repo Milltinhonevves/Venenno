@@ -198,6 +198,7 @@ document.getElementById('btn-processar').addEventListener('click', async (e) => 
 
     const payload = {
       audio: audioB64, mime,
+      semitons_extra: semitons,
       tonica: fd.get('tonica'), escala: fd.get('escala'),
       strength: fd.get('strength'), reducao_ruido: fd.get('reducao_ruido'),
       eq_graves: fd.get('eq_graves'), eq_medios: fd.get('eq_medios'), eq_agudos: fd.get('eq_agudos')
