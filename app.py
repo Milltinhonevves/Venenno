@@ -294,7 +294,7 @@ _jobs = {}
 @app.route('/enviar', methods=['POST'])
 def enviar():
     dados = request.get_json(force=True)
-    audio_b64     = dados.get('audio_b64', '')
+    audio_b64     = dados.get('audio_b64', '') or dados.get('audio', '')
     tonica        = dados.get('tonica', 'C')
     escala        = dados.get('escala', 'maior')
     strength      = float(dados.get('strength', 0.8))
