@@ -169,8 +169,9 @@ def processar():
             return jsonify({'erro': 'Arquivo vazio.'}), 400
 
         wav = converter_wav(orig); tmp_files.append(wav)
-        y, sr = librosa.load(wav, sr=44100, mono=True)
-        print(f'[proc] dur={len(y)/sr:.1f}s strength={strength}')
+        # Usa 22050 Hz pra processar mais rapido (metade dos dados)
+        y, sr = librosa.load(wav, sr=22050, mono=True)
+        print(f'[proc] dur={len(y)/sr:.1f}s sr={sr} strength={strength}')
         if len(y) == 0:
             return jsonify({'erro': 'Audio sem conteudo.'}), 400
 
@@ -183,7 +184,7 @@ def processar():
         f0 = librosa.yin(y,
             fmin=float(librosa.note_to_hz('C2')),
             fmax=float(librosa.note_to_hz('C7')),
-            sr=sr, frame_length=2048, hop_length=512)
+            sr=sr, frame_length=1024, hop_length=256)
         validos = f0[(f0 > 80) & (f0 < 1100) & ~np.isnan(f0)]
 
         if len(validos) > 0:
