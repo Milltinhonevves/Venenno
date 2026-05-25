@@ -7,6 +7,7 @@ let arquivoAtual = null;
 let blobGravado = null;
 let timerInterval = null;
 let startTime = null;
+let semitons = 0;  // semitons extra antes de aplicar
 
 function getMime() {
   const lista = ['audio/webm;codecs=opus','audio/webm','audio/ogg;codecs=opus','audio/ogg','audio/mp4'];
@@ -80,6 +81,64 @@ function resetGravador() {
     if (el) el.hidden = true;
   });
 }
+
+// Semitons
+document.addEventListener('DOMContentLoaded', () => {
+  const elValor = document.getElementById('semitonValor');
+  const btnMenos = document.getElementById('btnMenos');
+  const btnMais  = document.getElementById('btnMais');
+  const btnPrev  = document.getElementById('btnPreview');
+
+  if (btnMenos) btnMenos.addEventListener('click', () => {
+    if (semitons > -12) { semitons--; elValor.textContent = semitons > 0 ? '+'+semitons : String(semitons); }
+  });
+  if (btnMais) btnMais.addEventListener('click', () => {
+    if (semitons < 12) { semitons++; elValor.textContent = semitons > 0 ? '+'+semitons : String(semitons); }
+  });
+  if (btnPrev) btnPrev.addEventListener('click', async () => {
+    const audioBlob = blobGravado || arquivoAtual;
+    if (!audioBlob) { mostrarErro('Grave ou importe um áudio primeiro!'); return; }
+    btnPrev.textContent = '⏳ Aguarde...';
+    btnPrev.disabled = true;
+    try {
+      const arrayBuf = await audioBlob.arrayBuffer();
+      const uint8 = new Uint8Array(arrayBuf);
+      let binStr = '';
+      for (let i = 0; i < uint8.length; i++) binStr += String.fromCharCode(uint8[i]);
+      const b64 = btoa(binStr);
+      const mime = audioBlob.type || 'audio/mpeg';
+      const payload = {
+        audio: b64, mime,
+        tonica: document.getElementById('tonica').value,
+        escala: document.getElementById('escala').value,
+        strength: document.getElementById('strength').value,
+        reducao_ruido: document.getElementById('reducao_ruido').value,
+        eq_graves: document.getElementById('eq_graves').value,
+        eq_medios: document.getElementById('eq_medios').value,
+        eq_agudos: document.getElementById('eq_agudos').value,
+        semitons_extra: semitons
+      };
+      const resp = await fetch('/enviar', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+      const { job_id, erro } = await resp.json();
+      if (!job_id) { mostrarErro(erro || 'Falha'); btnPrev.textContent='▶ Pré-escuta'; btnPrev.disabled=false; return; }
+      const poll = setInterval(async () => {
+        const d = await (await fetch('/status/'+job_id)).json();
+        if (d.status === 'done') {
+          clearInterval(poll);
+          btnPrev.textContent = '▶ Pré-escuta'; btnPrev.disabled = false;
+          mostrarResultado('', d.audio_b64);
+        } else if (d.status === 'error' || d.status === 'not_found') {
+          clearInterval(poll);
+          btnPrev.textContent = '▶ Pré-escuta'; btnPrev.disabled = false;
+          mostrarErro(d.erro || 'Erro na pré-escuta');
+        }
+      }, 3000);
+    } catch(e) {
+      btnPrev.textContent = '▶ Pré-escuta'; btnPrev.disabled = false;
+      mostrarErro('Erro: ' + e.message);
+    }
+  });
+});
 
 // Microfone
 document.getElementById('btn-mic').addEventListener('click', async () => {
