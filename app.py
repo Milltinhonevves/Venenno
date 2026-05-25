@@ -300,40 +300,42 @@ def iniciar():
         tmp = []
         try:
             wav = converter_wav(orig); tmp.append(wav)
-            y, sr = librosa.load(wav, sr=22050, mono=True)
+            y, sr_audio = librosa.load(wav, sr=22050, mono=True)
             if len(y) == 0:
                 _jobs[uid] = {'status': 'error', 'erro': 'Audio sem conteudo.'}
                 return
             if reducao_ruido > 0:
-                y = eliminar_ruido(y, sr, intensidade=reducao_ruido)
-            y = aplicar_eq(y, sr, eq_graves, eq_medios, eq_agudos)
+                y = eliminar_ruido(y, sr_audio, intensidade=reducao_ruido)
+            y = aplicar_eq(y, sr_audio, eq_graves, eq_medios, eq_agudos)
             f0 = librosa.yin(y,
                 fmin=float(librosa.note_to_hz('C2')),
                 fmax=float(librosa.note_to_hz('C7')),
-                sr=sr, frame_length=1024, hop_length=256)
+                sr=sr_audio, frame_length=1024, hop_length=256)
             validos = f0[(f0 > 80) & (f0 < 1100) & ~np.isnan(f0)]
-            if len(validos) == 0:
-                _jobs[uid] = {'status': 'error', 'erro': 'Nenhuma nota detectada.'}
-                return
-            freq_media = float(np.median(validos))
-            notas_alvo = gerar_escala(tonica, escala)
-            y_afinado = afinar_audio(y, sr, f0, notas_alvo, strength)
-            y_norm = y_afinado / (np.max(np.abs(y_afinado)) + 1e-9)
-            y_norm = np.clip(y_norm * 0.9, -1.0, 1.0)
-            out_wav = os.path.join(app.config['UPLOAD_FOLDER'], uid + '_out.wav')
+            if len(validos) > 0:
+                pitch       = float(np.median(validos))
+                escala_midi = gerar_escala(tonica, escala)
+                midi_atual  = freq_para_midi(pitch)
+                midi_alvo   = nota_mais_proxima(midi_atual, escala_midi)
+                n_steps     = (midi_alvo - midi_atual) * strength
+                print(f'[bg autotune] pitch={pitch:.1f}Hz steps={n_steps:.3f}')
+                y = pitch_shift_melhor(y, sr_audio, n_steps)
+            fator = 10 ** (2.0 / 20.0)
+            y = np.clip(y * fator, -1.0, 1.0).astype(np.float32)
+            out_wav = os.path.join(app.config['PROCESSED_FOLDER'], uid + '_out.wav')
             tmp.append(out_wav)
-            sf.write(out_wav, y_norm.astype(np.float32), sr)
+            sf.write(out_wav, y, sr_audio)
             audio_b64 = wav_para_mp3_b64(out_wav)
             _jobs[uid] = {'status': 'done', 'audio_b64': audio_b64}
-            print(f'[iniciar] job={uid} concluido b64={len(audio_b64)}')
+            print(f'[bg] job={uid} concluido b64={len(audio_b64)}')
         except Exception as e:
-            print(f'[iniciar] job={uid} erro: {e}')
+            import traceback
+            print(f'[bg] job={uid} ERRO:\n{traceback.format_exc()}')
             _jobs[uid] = {'status': 'error', 'erro': str(e)}
         finally:
             for f in tmp + [orig]:
                 try: os.remove(f)
                 except: pass
-
     _threading.Thread(target=_bg, daemon=True).start()
     return jsonify({'job_id': uid})
 
