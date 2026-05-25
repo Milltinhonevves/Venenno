@@ -260,6 +260,91 @@ def no_cache(response):
     response.headers['Expires'] = '0'
     return response
 
+
+import threading as _threading
+_jobs = {}  # job_id -> resultado
+
+@app.route('/iniciar', methods=['POST'])
+def iniciar():
+    """Recebe audio, processa em background, retorna job_id imediatamente"""
+    arq = request.files.get('audio')
+    if not arq:
+        return jsonify({'erro': 'Nenhum arquivo enviado.'}), 400
+
+    tonica        = request.form.get('tonica', 'C')
+    escala        = request.form.get('escala', 'maior')
+    strength      = float(request.form.get('strength', 0.8))
+    reducao_ruido = float(request.form.get('reducao_ruido', 0.0))
+    eq_graves     = float(request.form.get('eq_graves', 0.0))
+    eq_medios     = float(request.form.get('eq_medios', 0.0))
+    eq_agudos     = float(request.form.get('eq_agudos', 0.0))
+
+    uid = str(uuid.uuid4())
+    nome_orig = arq.filename or ''
+    ext_orig  = os.path.splitext(nome_orig)[1].lower()
+    if not ext_orig:
+        ct = (arq.content_type or '').lower()
+        if 'mp3' in ct or 'mpeg' in ct:   ext_orig = '.mp3'
+        elif 'mp4' in ct or 'm4a' in ct:  ext_orig = '.mp4'
+        elif 'ogg' in ct:                 ext_orig = '.ogg'
+        elif 'webm' in ct:                ext_orig = '.webm'
+        elif 'wav' in ct:                 ext_orig = '.wav'
+        else:                             ext_orig = '.mp3'
+    orig = os.path.join(app.config['UPLOAD_FOLDER'], uid + ext_orig)
+    arq.save(orig)
+    print(f'[iniciar] job={uid} arquivo={orig} size={os.path.getsize(orig)}')
+
+    _jobs[uid] = {'status': 'processing'}
+
+    def _bg():
+        tmp = []
+        try:
+            wav = converter_wav(orig); tmp.append(wav)
+            y, sr = librosa.load(wav, sr=22050, mono=True)
+            if len(y) == 0:
+                _jobs[uid] = {'status': 'error', 'erro': 'Audio sem conteudo.'}
+                return
+            if reducao_ruido > 0:
+                y = eliminar_ruido(y, sr, intensidade=reducao_ruido)
+            y = aplicar_eq(y, sr, eq_graves, eq_medios, eq_agudos)
+            f0 = librosa.yin(y,
+                fmin=float(librosa.note_to_hz('C2')),
+                fmax=float(librosa.note_to_hz('C7')),
+                sr=sr, frame_length=1024, hop_length=256)
+            validos = f0[(f0 > 80) & (f0 < 1100) & ~np.isnan(f0)]
+            if len(validos) == 0:
+                _jobs[uid] = {'status': 'error', 'erro': 'Nenhuma nota detectada.'}
+                return
+            freq_media = float(np.median(validos))
+            nota_detect = freq_para_nota(freq_media)
+            notas_alvo = notas_da_escala(tonica, escala)
+            y_afinado = afinar_audio(y, sr, f0, notas_alvo, strength)
+            y_norm = y_afinado / (np.max(np.abs(y_afinado)) + 1e-9)
+            y_norm = np.clip(y_norm * 0.9, -1.0, 1.0)
+            out_wav = os.path.join(app.config['UPLOAD_FOLDER'], uid + '_out.wav')
+            tmp.append(out_wav)
+            sf.write(out_wav, y_norm.astype(np.float32), sr)
+            audio_b64 = wav_para_mp3_b64(out_wav)
+            _jobs[uid] = {'status': 'done', 'audio_b64': audio_b64}
+            print(f'[iniciar] job={uid} concluido b64={len(audio_b64)}')
+        except Exception as e:
+            print(f'[iniciar] job={uid} erro: {e}')
+            _jobs[uid] = {'status': 'error', 'erro': str(e)}
+        finally:
+            for f in tmp + [orig]:
+                try: os.remove(f)
+                except: pass
+
+    _threading.Thread(target=_bg, daemon=True).start()
+    return jsonify({'job_id': uid})
+
+@app.route('/status/<job_id>')
+def status(job_id):
+    job = _jobs.get(job_id, {'status': 'not_found'})
+    if job['status'] in ('done', 'error', 'not_found'):
+        _jobs.pop(job_id, None)
+    return jsonify(job)
+
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(debug=False, host='0.0.0.0', port=port)
