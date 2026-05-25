@@ -44,25 +44,52 @@ def wav_para_mp3(wav_path, mp3_path):
         raise RuntimeError('ffmpeg mp3: ' + r.stderr.decode(errors='replace')[-200:])
 
 def aplicar_eq_ffmpeg(wav_in, graves=0, medios=0, agudos=0):
+    """Equalizador 3 bandas usando scipy - sem ffmpeg"""
     try:
+        from scipy.signal import butter, sosfilt
         graves = float(graves); medios = float(medios); agudos = float(agudos)
         if graves == 0 and medios == 0 and agudos == 0:
             return wav_in
-        filtros = []
-        if graves != 0: filtros.append(f"equalizer=f=100:t=o:w=200:g={graves}")
-        if medios != 0: filtros.append(f"equalizer=f=1000:t=o:w=500:g={medios}")
-        if agudos != 0: filtros.append(f"equalizer=f=8000:t=o:w=3000:g={agudos}")
+
+        y, sr = librosa.load(wav_in, sr=None, mono=True)
+
+        def shelv_low(y, sr, gain_db, cutoff=300):
+            if gain_db == 0: return y
+            gain = 10 ** (gain_db / 20.0)
+            sos = butter(2, cutoff / (sr / 2), btype='low', output='sos')
+            baixos = sosfilt(sos, y)
+            altos  = y - baixos
+            return baixos * gain + altos
+
+        def shelv_high(y, sr, gain_db, cutoff=4000):
+            if gain_db == 0: return y
+            gain = 10 ** (gain_db / 20.0)
+            sos = butter(2, cutoff / (sr / 2), btype='high', output='sos')
+            agud = sosfilt(sos, y)
+            resto = y - agud
+            return agud * gain + resto
+
+        def band_boost(y, sr, gain_db, low=500, high=3000):
+            if gain_db == 0: return y
+            gain = 10 ** (gain_db / 20.0)
+            sos_l = butter(2, low  / (sr / 2), btype='high', output='sos')
+            sos_h = butter(2, high / (sr / 2), btype='low',  output='sos')
+            band = sosfilt(sos_h, sosfilt(sos_l, y))
+            resto = y - band
+            return band * gain + resto
+
+        y = shelv_low(y, sr, graves)
+        y = band_boost(y, sr, medios)
+        y = shelv_high(y, sr, agudos)
+
+        # Normaliza pra evitar clipping
+        pico = np.max(np.abs(y))
+        if pico > 1.0:
+            y = y / pico
+
         wav_out = wav_in + '_eq.wav'
-        r = subprocess.run(
-            [FFMPEG,'-y','-i',wav_in,'-af',','.join(filtros),'-ar','44100','-ac','1',wav_out],
-            capture_output=True, timeout=300
-        )
-        if r.returncode != 0:
-            print(f'[eq erro] {r.stderr.decode(errors="replace")[-200:]}')
-            return wav_in
-        if not os.path.exists(wav_out) or os.path.getsize(wav_out) == 0:
-            print('[eq erro] arquivo de saida vazio')
-            return wav_in
+        import soundfile as sf
+        sf.write(wav_out, y.astype(np.float32), sr)
         return wav_out
     except Exception as e:
         print(f'[eq excecao] {e}')
