@@ -138,18 +138,12 @@ def nota_mais_proxima(midi_val, escala_midi):
     return escala_midi[int(np.argmin(np.abs(arr - midi_val)))]
 
 def pitch_shift_melhor(y, sr, n_steps):
+    """Pitch shift usando librosa (confiavel no Railway)."""
     if abs(n_steps) < 0.05:
         return y
-    try:
-        import pyrubberband as pyrb
-        result = pyrb.pitch_shift(y, sr, n_steps)
-        print(f'[pyrubberband] steps={n_steps:.3f}')
-        return result.astype(np.float32)
-    except Exception as ex:
-        print(f'[pyrubberband erro] {ex} — librosa fallback')
-        return librosa.effects.pitch_shift(y, sr=sr, n_steps=n_steps, bins_per_octave=96).astype(np.float32)
-
-@app.route('/')
+    print(f'[pitch_shift] steps={n_steps:.3f}')
+    result = librosa.effects.pitch_shift(y=y, sr=sr, n_steps=float(n_steps))
+    return result.astype(np.float32)
 def index():
     return render_template('index.html')
 
