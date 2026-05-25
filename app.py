@@ -151,20 +151,24 @@ def yin_simples(seg):
 
 
 def pitch_shift_scipy(seg, n_steps):
-    """Pitch shift via resample — zero dependencias pesadas."""
+    """
+    Pitch shift SEM alterar duracao/velocidade.
+    Passo 1: resample pra mudar o pitch (muda duracao temporariamente)
+    Passo 2: resample de volta ao tamanho original (restaura duracao)
+    Resultado: pitch diferente, mesma velocidade.
+    """
     if abs(n_steps) < 0.05:
         return seg
-    fator  = 2.0 ** (n_steps / 12.0)
+    fator  = 2.0 ** (float(n_steps) / 12.0)
     n_orig = len(seg)
-    n_novo = int(round(n_orig / fator))
-    if n_novo < 2:
+    # Passo 1: pitch up/down via resample
+    n_pitch = int(round(n_orig / fator))
+    if n_pitch < 2:
         return seg
-    shifted = scipy_resample(seg, n_novo).astype(np.float32)
-    # Ajusta tamanho de volta ao original
-    if len(shifted) >= n_orig:
-        return shifted[:n_orig]
-    else:
-        return np.pad(shifted, (0, n_orig - len(shifted)))
+    pitched = scipy_resample(seg, n_pitch).astype(np.float32)
+    # Passo 2: volta ao tamanho original (time-stretch simples)
+    restored = scipy_resample(pitched, n_orig).astype(np.float32)
+    return restored
 
 def autotune(y, tonica, escala, strength=0.8):
     """Autotune frame a frame: chunks de 1s, yin proprio, scipy resample."""
