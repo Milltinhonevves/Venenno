@@ -1,4 +1,4 @@
-import os, uuid, subprocess, traceback
+import os, uuid, subprocess, traceback, shutil
 import numpy as np
 import librosa
 import soundfile as sf
@@ -27,7 +27,7 @@ ESCALAS = {
 def converter_wav(origem):
     dest = origem + '_conv.wav'
     r = subprocess.run(
-        [FFMPEG,'-y','-i',origem,'-ar','44100','-ac','1','-f','wav',dest],
+        [FFMPEG,'-y','-i',origem,'-ar','44100','-ac','1','-acodec','pcm_s16le','-f','wav',dest],
         capture_output=True, timeout=300
     )
     if r.returncode != 0:
@@ -61,9 +61,9 @@ def eliminar_ruido(y, sr, intensidade=0.5):
         stft_ruido   = librosa.stft(y[:n_ruido], n_fft=n_fft, hop_length=hop)
         perfil_ruido = np.mean(np.abs(stft_ruido), axis=1, keepdims=True)
         stft_y = librosa.stft(y, n_fft=n_fft, hop_length=hop)
-        mag    = np.abs(stft_y)
-        fase   = np.angle(stft_y)
-        fator  = 1.0 + intensidade * 3.0
+        mag  = np.abs(stft_y)
+        fase = np.angle(stft_y)
+        fator = 1.0 + intensidade * 3.0
         mag_limpa  = np.maximum(mag - perfil_ruido * fator, mag * 0.05)
         stft_limpo = mag_limpa * np.exp(1j * fase)
         return librosa.istft(stft_limpo, hop_length=hop, length=len(y)).astype(np.float32)
@@ -82,22 +82,23 @@ def nota_mais_proxima(midi_val, escala_midi):
     arr = np.array(escala_midi, dtype=float)
     return escala_midi[int(np.argmin(np.abs(arr - midi_val)))]
 
-def pitch_shift_rubberband(y, sr, n_steps):
+def pitch_shift_melhor(y, sr, n_steps):
     """
-    Usa pyrubberband — motor profissional (mesmo do Audacity).
-    Preserva timbre, clareza e naturalidade da voz.
+    Tenta pyrubberband primeiro (qualidade profissional).
+    Fallback: librosa com bins_per_octave=96 (mais fino).
     """
     if abs(n_steps) < 0.05:
         return y
     try:
         import pyrubberband as pyrb
-        ratio = 2 ** (n_steps / 12.0)
-        y_shifted = pyrb.pitch_shift(y, sr, n_steps)
-        print(f'[rubberband] steps={n_steps:.2f} ratio={ratio:.3f}')
-        return y_shifted.astype(np.float32)
+        result = pyrb.pitch_shift(y, sr, n_steps)
+        print(f'[pyrubberband] steps={n_steps:.3f}')
+        return result.astype(np.float32)
     except Exception as ex:
-        print(f'[rubberband erro] {ex} — fallback librosa')
-        return librosa.effects.pitch_shift(y, sr=sr, n_steps=n_steps, bins_per_octave=48)
+        print(f'[pyrubberband erro] {ex} — usando librosa')
+        return librosa.effects.pitch_shift(
+            y, sr=sr, n_steps=n_steps, bins_per_octave=96
+        ).astype(np.float32)
 
 @app.route('/')
 def index():
@@ -126,28 +127,26 @@ def processar():
         if os.path.getsize(orig) == 0:
             return jsonify({'erro': 'Arquivo vazio.'}), 400
 
-        # 1. Converte pra WAV 44100Hz
+        # 1. Converte pra WAV 44100Hz PCM
         wav = converter_wav(orig); tmp_files.append(wav)
-
-        # 2. Carrega áudio
         y, sr = librosa.load(wav, sr=44100, mono=True)
-        print(f'[proc] duracao={len(y)/sr:.1f}s sr={sr}')
+        print(f'[proc] dur={len(y)/sr:.1f}s strength={strength}')
         if len(y) == 0:
             return jsonify({'erro': 'Audio sem conteudo.'}), 400
 
-        # 3. Elimina ruído
+        # 2. Elimina ruído
         if reducao_ruido > 0:
             y = eliminar_ruido(y, sr, intensidade=reducao_ruido)
 
-        # 4. Equaliza
+        # 3. EQ antes da afinação
         if eq_graves != 0 or eq_medios != 0 or eq_agudos != 0:
-            wav_eq = wav + '_eq.wav'; tmp_files.append(wav_eq)
-            sf.write(wav_eq, y, sr)
-            wav_eq2 = aplicar_eq_ffmpeg(wav_eq, eq_graves, eq_medios, eq_agudos)
-            if wav_eq2 != wav_eq: tmp_files.append(wav_eq2)
-            y, sr = librosa.load(wav_eq2, sr=44100, mono=True)
+            tmp_eq = wav + '_pre_eq.wav'; tmp_files.append(tmp_eq)
+            sf.write(tmp_eq, y, sr)
+            tmp_eq2 = aplicar_eq_ffmpeg(tmp_eq, eq_graves, eq_medios, eq_agudos)
+            if tmp_eq2 != tmp_eq: tmp_files.append(tmp_eq2)
+            y, _ = librosa.load(tmp_eq2, sr=44100, mono=True)
 
-        # 5. Detecta pitch
+        # 4. Detecta pitch
         f0 = librosa.yin(y,
             fmin=float(librosa.note_to_hz('C2')),
             fmax=float(librosa.note_to_hz('C7')),
@@ -155,7 +154,7 @@ def processar():
         validos = f0[(f0 > 80) & (f0 < 1100) & ~np.isnan(f0)]
 
         if len(validos) == 0:
-            print('[autotune] sem pitch')
+            print('[autotune] sem pitch detectado')
             nome = f'venenno_{uid}.wav'
             sf.write(os.path.join(app.config['PROCESSED_FOLDER'], nome), y, sr)
             return jsonify({'sucesso': True, 'url': f'/download/{nome}'})
@@ -165,12 +164,12 @@ def processar():
         midi_atual  = freq_para_midi(pitch)
         midi_alvo   = nota_mais_proxima(midi_atual, escala_midi)
         n_steps     = (midi_alvo - midi_atual) * strength
-        print(f'[autotune] pitch={pitch:.1f}Hz steps={n_steps:.2f}')
+        print(f'[autotune] pitch={pitch:.1f}Hz midi={midi_atual:.2f} alvo={midi_alvo:.2f} steps={n_steps:.3f}')
 
-        # 6. Pitch shift com RUBBERBAND (qualidade profissional)
-        y_final = pitch_shift_rubberband(y, sr, n_steps)
+        # 5. Pitch shift de alta qualidade
+        y_final = pitch_shift_melhor(y, sr, n_steps)
 
-        # 7. Ganho leve
+        # 6. Ganho leve +2dB
         fator = 10 ** (2.0 / 20.0)
         y_final = np.clip(y_final * fator, -1.0, 1.0).astype(np.float32)
 
@@ -189,7 +188,11 @@ def processar():
 
 @app.route('/download/<nome>')
 def download(nome):
-    return send_from_directory(app.config['PROCESSED_FOLDER'], nome)
+    return send_from_directory(
+        app.config['PROCESSED_FOLDER'], nome,
+        as_attachment=True,
+        download_name=nome
+    )
 
 @app.route('/debug')
 def debug():
