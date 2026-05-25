@@ -1,4 +1,4 @@
-const CACHE = "venenno-v9";
+const CACHE = "venenno-v10";
 const ASSETS = ["/", "/static/css/style.css", "/static/js/main.js"];
 
 self.addEventListener("install", e => {
