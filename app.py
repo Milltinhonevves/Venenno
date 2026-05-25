@@ -34,19 +34,41 @@ def converter_wav(origem):
         raise RuntimeError('ffmpeg: ' + r.stderr.decode(errors='replace')[-300:])
     return dest
 
-def pitch_shift_ffmpeg(wav_in, n_steps):
+def aplicar_eq(wav_in, graves=0, medios=0, agudos=0):
     """
-    Usa o ffmpeg com filtro asetrate+atempo para pitch shift
-    sem degradar a qualidade — muito mais limpo que librosa.
+    Equalizador 3 bandas via ffmpeg equalizer filter.
+    graves: 100Hz, medios: 1000Hz, agudos: 8000Hz
+    valores em dB (-12 a +12)
     """
-    if abs(n_steps) < 0.05:
+    if graves == 0 and medios == 0 and agudos == 0:
         return wav_in
 
-    # Fator de frequência: 2^(n_steps/12)
-    fator = 2 ** (n_steps / 12.0)
-    # asetrate muda o pitch, atempo corrige o tempo
-    filtro = f"asetrate=44100*{fator:.6f},aresample=44100,atempo={1.0/fator:.6f}"
+    filtros = []
+    if graves != 0:
+        filtros.append(f"equalizer=f=100:t=o:w=200:g={graves}")
+    if medios != 0:
+        filtros.append(f"equalizer=f=1000:t=o:w=500:g={medios}")
+    if agudos != 0:
+        filtros.append(f"equalizer=f=8000:t=o:w=3000:g={agudos}")
 
+    wav_out = wav_in + '_eq.wav'
+    r = subprocess.run(
+        [FFMPEG, '-y', '-i', wav_in,
+         '-af', ','.join(filtros),
+         '-ar', '44100', '-ac', '1', wav_out],
+        capture_output=True, timeout=300
+    )
+    if r.returncode != 0:
+        print(f'[eq erro] {r.stderr.decode(errors="replace")[-200:]}')
+        return wav_in
+    print(f'[eq] graves={graves}dB medios={medios}dB agudos={agudos}dB')
+    return wav_out
+
+def pitch_shift_ffmpeg(wav_in, n_steps):
+    if abs(n_steps) < 0.05:
+        return wav_in
+    fator = 2 ** (n_steps / 12.0)
+    filtro = f"asetrate=44100*{fator:.6f},aresample=44100,atempo={1.0/fator:.6f}"
     wav_out = wav_in + '_shifted.wav'
     r = subprocess.run(
         [FFMPEG, '-y', '-i', wav_in,
@@ -55,9 +77,8 @@ def pitch_shift_ffmpeg(wav_in, n_steps):
         capture_output=True, timeout=300
     )
     if r.returncode != 0:
-        print(f'[pitch_ffmpeg erro] {r.stderr.decode(errors="replace")[-200:]}')
-        return wav_in  # fallback: retorna original
-
+        print(f'[pitch erro] {r.stderr.decode(errors="replace")[-200:]}')
+        return wav_in
     return wav_out
 
 def eliminar_ruido(y, sr, intensidade=0.5):
@@ -106,32 +127,42 @@ def processar():
     escala        = request.form.get('escala',        'maior')
     strength      = float(request.form.get('strength',      0.8))
     reducao_ruido = float(request.form.get('reducao_ruido', 0.0))
+    eq_graves     = float(request.form.get('eq_graves',     0.0))
+    eq_medios     = float(request.form.get('eq_medios',     0.0))
+    eq_agudos     = float(request.form.get('eq_agudos',     0.0))
 
     uid  = str(uuid.uuid4())
     orig = os.path.join(app.config['UPLOAD_FOLDER'], uid)
-    wav  = None
-    shifted = None
+    tmp_files = []
 
     try:
         arq.save(orig)
+        tmp_files.append(orig)
         if os.path.getsize(orig) == 0:
             return jsonify({'erro': 'Arquivo vazio.'}), 400
 
-        # Converte para WAV 44100Hz
+        # 1. Converte pra WAV 44100Hz
         wav = converter_wav(orig)
-        y, sr = librosa.load(wav, sr=44100, mono=True)
-        print(f'[proc] duracao={len(y)/sr:.1f}s sr={sr} strength={strength}')
+        tmp_files.append(wav)
+
+        # 2. Elimina ruído se pedido
+        if reducao_ruido > 0:
+            y, sr = librosa.load(wav, sr=44100, mono=True)
+            y = eliminar_ruido(y, sr, intensidade=reducao_ruido)
+            sf.write(wav, y, sr)
+
+        # 3. Equaliza ANTES da afinação
+        wav_eq = aplicar_eq(wav, graves=eq_graves, medios=eq_medios, agudos=eq_agudos)
+        if wav_eq != wav:
+            tmp_files.append(wav_eq)
+
+        # 4. Detecta pitch
+        y, sr = librosa.load(wav_eq, sr=44100, mono=True)
+        print(f'[proc] duracao={len(y)/sr:.1f}s strength={strength}')
 
         if len(y) == 0:
             return jsonify({'erro': 'Audio sem conteudo.'}), 400
 
-        # 1. Elimina ruído se pedido
-        if reducao_ruido > 0:
-            y = eliminar_ruido(y, sr, intensidade=reducao_ruido)
-            # Salva de volta pro wav temporário
-            sf.write(wav, y, sr)
-
-        # 2. Detecta pitch médio
         hop = 512
         f0 = librosa.yin(y,
             fmin=float(librosa.note_to_hz('C2')),
@@ -141,24 +172,26 @@ def processar():
         validos = f0[(f0 > 80) & (f0 < 1100) & ~np.isnan(f0)]
 
         if len(validos) == 0:
-            print('[autotune] sem pitch, retorna original')
+            print('[autotune] sem pitch detectado')
             nome = f'venenno_{uid}.wav'
             sf.write(os.path.join(app.config['PROCESSED_FOLDER'], nome), y, sr)
             return jsonify({'sucesso': True, 'url': f'/download/{nome}'})
 
-        pitch     = float(np.median(validos))
+        pitch       = float(np.median(validos))
         escala_midi = gerar_escala(tonica, escala)
         midi_atual  = freq_para_midi(pitch)
         midi_alvo   = nota_mais_proxima(midi_atual, escala_midi)
         n_steps     = (midi_alvo - midi_atual) * strength
-
         print(f'[autotune] pitch={pitch:.1f}Hz steps={n_steps:.2f}')
 
-        # 3. Pitch shift via ffmpeg (qualidade superior)
-        shifted = pitch_shift_ffmpeg(wav, n_steps)
-        y_final, _ = librosa.load(shifted, sr=44100, mono=True)
+        # 5. Pitch shift via ffmpeg
+        wav_shifted = pitch_shift_ffmpeg(wav_eq, n_steps)
+        if wav_shifted != wav_eq:
+            tmp_files.append(wav_shifted)
 
-        # 4. Ganho leve
+        y_final, _ = librosa.load(wav_shifted, sr=44100, mono=True)
+
+        # 6. Ganho leve
         fator = 10 ** (2.0 / 20.0)
         y_final = np.clip(y_final * fator, -1.0, 1.0).astype(np.float32)
 
@@ -170,13 +203,10 @@ def processar():
         print('ERRO:', traceback.format_exc())
         return jsonify({'erro': str(e)}), 500
     finally:
-        for f in [orig, wav, shifted]:
-            if f and f != wav and os.path.exists(f):
+        for f in tmp_files:
+            if f and os.path.exists(f):
                 try: os.remove(f)
                 except: pass
-        if wav and os.path.exists(wav):
-            try: os.remove(wav)
-            except: pass
 
 @app.route('/download/<nome>')
 def download(nome):
