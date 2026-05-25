@@ -1,0 +1,48 @@
+:root{--verde:#00ff88;--verde2:#00cc66;--bg:#0a0a0a;--card:#111;--borda:#1e1e1e;--texto:#e0e0e0;--cinza:#555}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--texto);font-family:'Segoe UI',sans-serif;min-height:100vh;padding-bottom:40px}
+header{text-align:center;padding:28px 16px 12px}
+header h1{font-size:2rem;color:var(--verde);letter-spacing:4px;text-transform:uppercase}
+header p{color:var(--cinza);font-size:.85rem;margin-top:4px}
+.container{max-width:480px;margin:0 auto;padding:0 16px}
+.card{background:var(--card);border:1px solid var(--borda);border-radius:16px;padding:20px;margin-bottom:16px}
+.card h2{font-size:1rem;color:var(--verde);margin-bottom:16px;display:flex;align-items:center;gap:8px}
+.gravador{display:flex;flex-direction:column;align-items:center;gap:12px}
+.btn-mic{width:80px;height:80px;border-radius:50%;background:var(--verde);border:none;font-size:2rem;cursor:pointer;transition:transform .15s,background .15s;display:flex;align-items:center;justify-content:center}
+.btn-mic:active{transform:scale(.92)}
+.btn-mic.gravando{background:#ff3355;animation:pulso 1s infinite}
+@keyframes pulso{0%,100%{box-shadow:0 0 0 0 rgba(255,51,85,.4)}50%{box-shadow:0 0 0 16px rgba(255,51,85,0)}}
+.timer{font-size:1.5rem;font-variant-numeric:tabular-nums;color:var(--verde);font-weight:700}
+.status-rec{font-size:.85rem;color:var(--cinza)}
+.preview-box{width:100%;background:#0d0d0d;border:1px solid var(--borda);border-radius:10px;padding:12px}
+.preview-box audio{width:100%;margin-bottom:10px}
+.btns-rec{display:flex;gap:8px;flex-wrap:wrap}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px}
+label.lbl{display:block;font-size:.75rem;color:var(--cinza);margin-bottom:4px;text-transform:uppercase;letter-spacing:1px}
+select{width:100%;background:#1a1a1a;color:var(--texto);border:1px solid var(--borda);border-radius:8px;padding:10px;font-size:.95rem}
+.slider-group{margin-bottom:14px}
+.slider-header{display:flex;justify-content:space-between;font-size:.8rem;color:var(--cinza);margin-bottom:6px}
+.slider-header span:last-child{color:var(--verde);font-weight:700}
+input[type=range]{-webkit-appearance:none;width:100%;height:6px;background:var(--borda);border-radius:4px;outline:none}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:20px;height:20px;background:var(--verde);border-radius:50%;cursor:pointer}
+.toggles{display:flex;gap:16px;flex-wrap:wrap}
+.toggle-item{display:flex;align-items:center;gap:8px;font-size:.9rem}
+.switch{position:relative;width:44px;height:24px}
+.switch input{opacity:0;width:0;height:0}
+.switch .slider-sw{position:absolute;inset:0;background:#333;border-radius:24px;transition:.3s;cursor:pointer}
+.switch .slider-sw:before{content:'';position:absolute;width:18px;height:18px;left:3px;bottom:3px;background:#fff;border-radius:50%;transition:.3s}
+.switch input:checked+.slider-sw{background:var(--verde)}
+.switch input:checked+.slider-sw:before{transform:translateX(20px)}
+.btn{border:none;border-radius:10px;padding:10px 18px;font-size:.9rem;font-weight:600;cursor:pointer;transition:opacity .15s,transform .1s}
+.btn:active{transform:scale(.96)}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+.btn-primario{width:100%;padding:16px;font-size:1.1rem;background:var(--verde);color:#000;border-radius:14px;margin-bottom:16px}
+.btn-secundario{background:#1e1e1e;color:var(--texto);border:1px solid var(--borda)}
+.btn-perigo{background:#2a0a0a;color:#ff5566;border:1px solid #3a1010}
+.btn-download{display:block;width:100%;padding:14px;background:transparent;color:var(--verde);border:2px solid var(--verde);border-radius:14px;text-align:center;text-decoration:none;font-size:1rem;font-weight:700;margin-top:12px}
+.resultado-card{background:#0a1f14;border:1px solid #1a4a2a;border-radius:16px;padding:20px;margin-bottom:16px}
+.resultado-card audio{width:100%;margin-top:12px}
+.erro-card{background:#1a0a0a;border:1px solid #3a1010;border-radius:16px;padding:16px;margin-bottom:16px;font-size:.9rem;color:#ff5566;word-break:break-word}
+.spinner{display:inline-block;width:20px;height:20px;border:3px solid rgba(0,0,0,.2);border-top-color:#000;border-radius:50%;animation:spin .7s linear infinite;vertical-align:middle;margin-right:8px}
+@keyframes spin{to{transform:rotate(360deg)}}
+footer{text-align:center;color:var(--cinza);font-size:.8rem;margin-top:24px}
