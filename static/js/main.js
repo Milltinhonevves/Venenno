@@ -40,16 +40,19 @@ function mostrarResultado(url) {
   if (err) err.hidden = true;
   if (el)  el.hidden  = false;
 
+  // Remove player antigo se existir
   const velho = document.getElementById('player');
   if (velho) velho.remove();
 
-  const audio = document.createElement('audio');
-  audio.id       = 'player';
-  audio.controls = true;
-  audio.src      = url + '?t=' + Date.now();
-  el.insertBefore(audio, dl);
-  audio.load();
-  audio.play().catch(function(){});
+  // Cria link grande pra abrir o MP3 direto no app do celular
+  const link = document.createElement('a');
+  link.id = 'player';
+  link.href = url + '?t=' + Date.now();
+  link.target = '_blank';
+  link.rel = 'noopener';
+  link.textContent = '▶️ OUVIR AGORA';
+  link.style.cssText = 'display:block;background:#00ff88;color:#000;font-size:1.3rem;font-weight:bold;text-align:center;padding:18px;border-radius:12px;margin:12px 0;text-decoration:none;';
+  el.insertBefore(link, dl);
 
   if (dl) { dl.href = url; dl.download = 'venenno.mp3'; }
 
