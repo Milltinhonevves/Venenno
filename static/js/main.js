@@ -101,6 +101,7 @@ function mostrarResultado(url) {
   resultadoEl.hidden   = false;
   playerEl.src         = url + '?t=' + Date.now();
   downloadEl.href      = url;
+  downloadEl.download  = 'venenno_' + Date.now() + '.wav';
   if (blobGravado) btnReusar.hidden = false;
 }
 
@@ -207,7 +208,7 @@ formEl.addEventListener('submit', async e => {
     }
 
     if (json && json.sucesso) {
-      mostrarResultado(json.url);
+      mostrarResultado(window.location.origin + json.url);
     } else {
       mostrarErro(json && json.erro ? json.erro : `HTTP ${resp.status}: ${texto.substring(0, 200)}`);
     }
