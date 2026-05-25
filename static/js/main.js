@@ -40,8 +40,16 @@ function mostrarResultado(url) {
   const erro = document.getElementById('erro');
   if (erro) erro.hidden = true;
   if (el) el.hidden = false;
-  if (player) player.src = url + '?t=' + Date.now();
-  if (dl) { dl.href = url; dl.download = 'venenno_' + Date.now() + '.wav'; }
+
+  // Igual ao preview - baixa como blob e cria URL local
+  fetch(url + '?t=' + Date.now())
+    .then(function(r) { return r.blob(); })
+    .then(function(blob) {
+      const blobUrl = URL.createObjectURL(new Blob([blob], {type: 'audio/mpeg'}));
+      if (player) { player.src = blobUrl; player.load(); player.play().catch(function(){}); }
+      if (dl) { dl.href = blobUrl; dl.download = 'venenno.mp3'; }
+    });
+
   const btnReusar = document.getElementById('btn-reusar');
   if (btnReusar && blobGravado) btnReusar.hidden = false;
 }
