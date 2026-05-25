@@ -2,6 +2,7 @@ import os, uuid, subprocess, shutil, traceback
 import numpy as np
 import librosa
 import soundfile as sf
+import imageio_ffmpeg
 from flask import Flask, request, jsonify, render_template, send_from_directory
 
 app = Flask(__name__)
@@ -12,18 +13,8 @@ app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024
 os.makedirs(app.config['UPLOAD_FOLDER'],    exist_ok=True)
 os.makedirs(app.config['PROCESSED_FOLDER'], exist_ok=True)
 
-def get_ffmpeg():
-    for p in [shutil.which('ffmpeg'), '/usr/bin/ffmpeg', '/usr/local/bin/ffmpeg',
-              '/nix/var/nix/profiles/default/bin/ffmpeg', '/run/current-system/sw/bin/ffmpeg']:
-        if p and os.path.isfile(p):
-            return p
-    # tenta achar no PATH do nix
-    try:
-        r = subprocess.run(['which','ffmpeg'], capture_output=True, text=True)
-        if r.returncode == 0 and r.stdout.strip():
-            return r.stdout.strip()
-    except: pass
-    return None
+# Usa ffmpeg do pacote imageio — sempre disponível!
+FFMPEG = imageio_ffmpeg.get_ffmpeg_exe()
 
 NOTAS = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B']
 ESCALAS = {
@@ -35,12 +26,9 @@ ESCALAS = {
 }
 
 def converter_wav(origem):
-    ffmpeg = get_ffmpeg()
-    if not ffmpeg:
-        raise RuntimeError('ffmpeg nao encontrado no servidor.')
     dest = origem + '_conv.wav'
     r = subprocess.run(
-        [ffmpeg,'-y','-i',origem,'-ar','44100','-ac','1','-f','wav',dest],
+        [FFMPEG,'-y','-i',origem,'-ar','44100','-ac','1','-f','wav',dest],
         capture_output=True, timeout=120
     )
     if r.returncode != 0:
@@ -142,12 +130,7 @@ def download(nome):
 
 @app.route('/debug')
 def debug():
-    ffmpeg = get_ffmpeg()
-    info = {'ffmpeg_path': ffmpeg, 'encontrado': ffmpeg is not None}
-    if ffmpeg:
-        r = subprocess.run([ffmpeg,'-version'], capture_output=True, text=True)
-        info['version'] = r.stdout[:100]
-    return jsonify(info)
+    return jsonify({'ffmpeg': FFMPEG, 'existe': os.path.isfile(FFMPEG)})
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
