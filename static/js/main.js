@@ -186,8 +186,16 @@ document.getElementById('btn-processar').addEventListener('click', async (e) => 
   fd.append('eq_medios',     document.querySelector('[name=eq_medios]').value);
   fd.append('eq_agudos',     document.querySelector('[name=eq_agudos]').value);
 
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 300000); // 5 min timeout
+
   try {
-    const resp = await fetch('/processar', { method: 'POST', body: fd });
+    const resp = await fetch('/processar', {
+      method: 'POST',
+      body: fd,
+      signal: controller.signal
+    });
+    clearTimeout(timeoutId);
     const texto = await resp.text();
     let data;
     try { data = JSON.parse(texto); } catch(_) {
@@ -200,7 +208,12 @@ document.getElementById('btn-processar').addEventListener('click', async (e) => 
       mostrarErro(data.erro || 'Erro desconhecido');
     }
   } catch (err) {
-    mostrarErro('Erro: ' + err.name + ' - ' + err.message + ' | audio=' + (arquivoAtual ? arquivoAtual.size + 'b ' + arquivoAtual.type : 'null'));
+    clearTimeout(timeoutId);
+    if (err.name === 'AbortError') {
+      mostrarErro('Tempo esgotado - tente um arquivo menor ou reduza o EQ');
+    } else {
+      mostrarErro('Erro: ' + err.name + ' - ' + err.message + ' | audio=' + (arquivoAtual ? arquivoAtual.size + 'b ' + arquivoAtual.type : 'null'));
+    }
   } finally {
     setProcessando(false);
   }
