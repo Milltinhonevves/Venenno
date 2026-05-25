@@ -303,6 +303,106 @@ def no_cache(response):
     response.headers['Expires']       = '0'
     return response
 
+import threading, time
+_jobs = {}
+
+@app.route('/enviar', methods=['POST'])
+def enviar():
+    dados = request.get_json(force=True)
+    audio_b64     = dados.get('audio_b64', '')
+    tonica        = dados.get('tonica', 'C')
+    escala        = dados.get('escala', 'maior')
+    strength      = float(dados.get('strength', 0.8))
+    reducao_ruido = float(dados.get('reducao_ruido', 0.0))
+    eq_graves     = float(dados.get('eq_graves', 0.0))
+    eq_medios     = float(dados.get('eq_medios', 0.0))
+    eq_agudos     = float(dados.get('eq_agudos', 0.0))
+    semitons_extra= int(dados.get('semitons_extra', 0))
+
+    if not audio_b64:
+        return jsonify({'erro': 'audio_b64 vazio'}), 400
+
+    uid = str(uuid.uuid4())
+    _jobs[uid] = {'status': 'processing'}
+
+    def processar_bg():
+        tmp_files = []
+        try:
+            raw = base64.b64decode(audio_b64)
+            # Detecta formato pelo header
+            if raw[:4] == b'fLaC':        ext = '.flac'
+            elif raw[:3] == b'ID3' or raw[:2] == b'\xff\xfb': ext = '.mp3'
+            elif raw[:4] == b'OggS':       ext = '.ogg'
+            elif raw[:4] == b'RIFF':       ext = '.wav'
+            elif raw[4:8] == b'ftyp':      ext = '.mp4'
+            elif raw[:4] == b'\x1aE\xdf\xa3': ext = '.webm'
+            else:                          ext = '.webm'
+
+            orig = os.path.join(app.config['UPLOAD_FOLDER'], uid + ext)
+            with open(orig, 'wb') as f:
+                f.write(raw)
+            tmp_files.append(orig)
+            print(f'[enviar] uid={uid} ext={ext} size={len(raw)}')
+
+            wav = converter_wav(orig); tmp_files.append(wav)
+            y   = carregar_audio(wav)
+            print(f'[enviar] dur={len(y)/SR:.1f}s')
+
+            if len(y) == 0:
+                _jobs[uid] = {'status':'error','erro':'Audio sem conteudo.'}
+                return
+
+            if reducao_ruido > 0:
+                y = eliminar_ruido(y, reducao_ruido)
+            y = aplicar_eq(y, eq_graves, eq_medios, eq_agudos)
+            y = autotune(y, tonica, escala, strength)
+
+            # Semitons extra (manual)
+            if semitons_extra != 0:
+                y = pitch_shift_scipy(y, SR, semitons_extra)
+
+            fator = 10 ** (6.0 / 20.0)
+            y = np.clip(y * fator, -1.0, 1.0).astype(np.float32)
+
+            wav_out = os.path.join(app.config['PROCESSED_FOLDER'], f'tmp_{uid}.wav')
+            mp3_out = os.path.join(app.config['PROCESSED_FOLDER'], f'venenno_{uid}.mp3')
+            tmp_files.append(wav_out)
+
+            sf.write(wav_out, y, SR)
+            wav_para_mp3(wav_out, mp3_out)
+
+            with open(mp3_out, 'rb') as f:
+                resultado_b64 = base64.b64encode(f.read()).decode('utf-8')
+
+            _jobs[uid] = {'status':'done','audio_b64': resultado_b64}
+            print(f'[enviar] uid={uid} concluido!')
+
+        except Exception as e:
+            print(f'[enviar] ERRO: {e}')
+            import traceback; traceback.print_exc()
+            _jobs[uid] = {'status':'error','erro': str(e)}
+        finally:
+            for f in tmp_files:
+                if f and os.path.exists(f):
+                    try: os.remove(f)
+                    except: pass
+
+    t = threading.Thread(target=processar_bg, daemon=True)
+    t.start()
+    return jsonify({'job_id': uid})
+
+
+@app.route('/status/<job_id>')
+def status(job_id):
+    job = _jobs.get(job_id, {'status':'not_found'})
+    # Limpa jobs antigos (>30)
+    if len(_jobs) > 30:
+        keys = list(_jobs.keys())
+        for k in keys[:-20]:
+            _jobs.pop(k, None)
+    return jsonify(job)
+
+
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(debug=False, host='0.0.0.0', port=port)
