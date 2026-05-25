@@ -148,65 +148,48 @@ def pitch_shift_melhor(y, sr, n_steps):
 
 def autotune_frame_a_frame(y, sr, tonica, escala, strength=0.8):
     """
-    Autotune frame a frame leve: detecta pitch com pyin globalmente,
-    divide em chunks de 500ms e corrige cada um individualmente.
-    Equilibrio entre precisao e uso de memoria no Railway.
+    Autotune leve por chunks de 1s: usa yin simples (rapido) por chunk
+    e corrige pitch individualmente. Funciona bem no Railway.
     """
     escala_midi = gerar_escala(tonica, escala)
-    chunk_size  = int(sr * 0.5)   # chunks de 500ms
-    hop_length  = 512
-    frame_length = 2048
-
-    # 1. Detecta pitch global com pyin
-    try:
-        f0, voiced, _ = librosa.pyin(
-            y,
-            fmin=float(librosa.note_to_hz('C2')),
-            fmax=float(librosa.note_to_hz('C7')),
-            sr=sr,
-            frame_length=frame_length,
-            hop_length=hop_length
-        )
-        validos = f0[voiced & ~np.isnan(f0) & (f0 > 60) & (f0 < 1200)]
-        print(f'[autotune ff] frames_vozeados={np.sum(voiced)} validos={len(validos)}')
-    except Exception as e:
-        print(f'[autotune ff] pyin falhou: {e}')
-        return y
-
-    if len(validos) == 0:
-        print('[autotune ff] nenhuma voz detectada')
-        return y
-
-    # 2. Para cada chunk de 500ms, calcula pitch local e corrige
-    out_chunks = []
-    n_chunks = max(1, int(np.ceil(len(y) / chunk_size)))
+    chunk_size  = int(sr * 1.0)  # 1 segundo por chunk
+    out_chunks  = []
+    n_chunks    = max(1, int(np.ceil(len(y) / chunk_size)))
+    print(f'[autotune] {n_chunks} chunks de 1s')
 
     for i in range(n_chunks):
         start = i * chunk_size
         end   = min(start + chunk_size, len(y))
         seg   = y[start:end].copy()
 
-        # Frames pyin correspondentes a este chunk
-        f_start = int(start / hop_length)
-        f_end   = int(end   / hop_length)
-        f0_seg  = f0[f_start:f_end] if f_end <= len(f0) else f0[f_start:]
-        v_seg   = voiced[f_start:f_end] if f_end <= len(voiced) else voiced[f_start:]
+        if len(seg) < 1024:
+            out_chunks.append(seg)
+            continue
 
-        f0_local = f0_seg[v_seg & ~np.isnan(f0_seg) & (f0_seg > 60) & (f0_seg < 1200)]
+        try:
+            # yin e rapido e nao aloca memoria extra
+            f0_seg = librosa.yin(
+                seg,
+                fmin=float(librosa.note_to_hz('C2')),
+                fmax=float(librosa.note_to_hz('C7')),
+                sr=sr,
+                frame_length=1024,
+                hop_length=256
+            )
+            validos = f0_seg[(f0_seg > 60) & (f0_seg < 1200) & ~np.isnan(f0_seg)]
 
-        if len(f0_local) > 0:
-            pitch_local = float(np.median(f0_local))
-            midi_atual  = freq_para_midi(pitch_local)
-            midi_alvo   = nota_mais_proxima(midi_atual, escala_midi)
-            n_steps     = (midi_alvo - midi_atual) * strength
-            print(f'[autotune ff] chunk={i} pitch={pitch_local:.1f}Hz steps={n_steps:.3f}')
-            if abs(n_steps) > 0.05:
-                try:
+            if len(validos) > 0:
+                pitch   = float(np.median(validos))
+                m_atual = freq_para_midi(pitch)
+                m_alvo  = nota_mais_proxima(m_atual, escala_midi)
+                n_steps = (m_alvo - m_atual) * strength
+                print(f'[autotune] chunk={i} pitch={pitch:.1f}Hz steps={n_steps:.3f}')
+                if abs(n_steps) > 0.05:
                     seg = librosa.effects.pitch_shift(
                         y=seg, sr=sr, n_steps=float(n_steps)
                     ).astype(np.float32)
-                except Exception as ex:
-                    print(f'[autotune ff] pitch_shift erro chunk {i}: {ex}')
+        except Exception as ex:
+            print(f'[autotune] chunk {i} erro: {ex}')
 
         out_chunks.append(seg)
 
