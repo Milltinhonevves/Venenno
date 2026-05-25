@@ -14,10 +14,16 @@ app.config['MAX_CONTENT_LENGTH'] = 200 * 1024 * 1024
 os.makedirs(app.config['UPLOAD_FOLDER'],    exist_ok=True)
 os.makedirs(app.config['PROCESSED_FOLDER'], exist_ok=True)
 
-# Usa ffmpeg do sistema (instalado via nixpacks com todos os codecs)
+# Usa imageio_ffmpeg (binario bundled) com fallback pro sistema
 import shutil as _shutil
-FFMPEG = _shutil.which('ffmpeg') or 'ffmpeg'
-print(f'[startup] ffmpeg path: {FFMPEG}')
+import imageio_ffmpeg as _ioff
+_sys_ff = _shutil.which('ffmpeg')
+try:
+    _img_ff = _ioff.get_ffmpeg_exe()
+except Exception:
+    _img_ff = None
+FFMPEG = _sys_ff or _img_ff or 'ffmpeg'
+print(f'[startup] ffmpeg={FFMPEG} sys={_sys_ff} imageio={_img_ff}')
 
 NOTAS = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B']
 ESCALAS = {
