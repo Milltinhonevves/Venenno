@@ -350,7 +350,7 @@ def enviar():
 
             # Semitons extra (manual)
             if semitons_extra != 0:
-                y = pitch_shift_scipy(y, SR, semitons_extra)
+                y = pitch_shift_scipy(y, semitons_extra)
 
             fator = 10 ** (6.0 / 20.0)
             y = np.clip(y * fator, -1.0, 1.0).astype(np.float32)
