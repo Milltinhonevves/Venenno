@@ -109,43 +109,44 @@ def nota_mais_proxima(midi, escala_midi):
 
 def yin_simples(seg):
     """
-    YIN compacto: opera em janela de 2048 amostras do centro do chunk.
-    Rapido, pouca memoria, suficiente para detectar pitch vocal.
+    YIN compacto e seguro — janela fixa de 2048 amostras, sem divisao por lista.
     """
-    # Usa janela de 2048 amostras do meio do chunk
     W = 2048
     n = len(seg)
-    if n < W:
-        trecho = seg
-    else:
-        mid = n // 2
-        trecho = seg[max(0, mid - W//2): mid + W//2]
-
-    n = len(trecho)
     if n < 256:
         return 0.0
+
+    # Pega janela do meio
+    mid    = n // 2
+    trecho = seg[max(0, mid - W//2): mid + W//2]
+    n      = len(trecho)
 
     min_tau = max(4, int(SR / 1200))
     max_tau = min(n // 2, int(SR / 60))
     if min_tau >= max_tau:
         return 0.0
 
-    # Difference function simples (vetorizada por slices numpy)
-    taus = np.arange(min_tau, max_tau)
-    diff = np.array([float(np.dot(trecho[:n-t]-trecho[t:], trecho[:n-t]-trecho[t:])) for t in taus])
+    # Difference function (loop simples — janela pequena, rapido)
+    diff = np.zeros(max_tau - min_tau, dtype=np.float32)
+    for i, tau in enumerate(range(min_tau, max_tau)):
+        d = trecho[:n - tau] - trecho[tau:]
+        diff[i] = float(np.dot(d, d))
 
     # CMND
-    cumsum = np.cumsum(diff)
-    cmnd   = diff * taus / (cumsum + 1e-10)
+    total  = float(diff.sum()) + 1e-10
+    cmnd   = diff / total  # sempre float / float
 
     # Primeiro minimo abaixo do threshold
-    below = np.where(cmnd < 0.15)[0]
-    if len(below) > 0:
-        tau = taus[below[0]]
-        return float(SR / tau) if tau > 0 else 0.0
+    threshold = 0.15
+    for i in range(len(cmnd) - 1):
+        if cmnd[i] < threshold and cmnd[i] <= cmnd[i + 1]:
+            tau = min_tau + i
+            return float(SR) / float(tau) if tau > 0 else 0.0
 
-    best = taus[int(np.argmin(cmnd))]
-    return float(SR / best) if best > 0 else 0.0
+    # Fallback
+    best_i = int(np.argmin(cmnd))
+    tau    = min_tau + best_i
+    return float(SR) / float(tau) if tau > 0 else 0.0
 
 
 def pitch_shift_scipy(seg, n_steps):
