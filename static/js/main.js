@@ -35,13 +35,16 @@ function mostrarErro(msg) {
 
 function mostrarResultado(url) {
   const el = document.getElementById('resultado');
-  const player = document.getElementById('player');
   const dl = document.getElementById('btn-download');
   const erro = document.getElementById('erro');
   if (erro) erro.hidden = true;
   if (el) el.hidden = false;
-  if (player) player.src = url + '?t=' + Date.now();
-  if (dl) { dl.href = url; dl.download = 'venenno_' + Date.now() + '.wav'; }
+  if (dl) { dl.href = url; dl.download = 'venenno.mp3'; }
+  // Abre MP3 direto no player nativo do Android
+  window.open(url, '_blank');
+  const btnReusar = document.getElementById('btn-reusar');
+  if (btnReusar && blobGravado) btnReusar.hidden = false;
+}
   const btnReusar = document.getElementById('btn-reusar');
   if (btnReusar && blobGravado) btnReusar.hidden = false;
 }
