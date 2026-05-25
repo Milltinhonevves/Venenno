@@ -4,6 +4,7 @@ import numpy as np
 import librosa
 import soundfile as sf
 import imageio_ffmpeg
+from scipy.signal import butter, sosfilt
 from flask import Flask, request, jsonify, render_template, send_from_directory
 
 app = Flask(__name__)
@@ -26,17 +27,13 @@ ESCALAS = {
 }
 
 def converter_wav(origem):
-    """Converte qualquer formato de audio para WAV usando librosa + soundfile"""
     dest = origem + '_conv.wav'
     try:
-        # Tenta primeiro com librosa (suporta mp3, m4a, ogg, wav, flac, etc)
         y, sr = librosa.load(origem, sr=44100, mono=True)
-        import soundfile as sf
         sf.write(dest, y.astype(np.float32), sr)
         return dest
     except Exception as e1:
         print(f'[librosa convert erro] {e1} - tentando ffmpeg')
-        # Fallback pro ffmpeg
         try:
             r = subprocess.run(
                 [FFMPEG,'-y','-i',origem,'-ar','44100','-ac','1','-acodec','pcm_s16le','-f','wav',dest],
@@ -56,57 +53,49 @@ def wav_para_mp3(wav_path, mp3_path):
     if r.returncode != 0:
         raise RuntimeError('ffmpeg mp3: ' + r.stderr.decode(errors='replace')[-200:])
 
-def aplicar_eq_ffmpeg(wav_in, graves=0, medios=0, agudos=0):
-    """Equalizador 3 bandas usando scipy - sem ffmpeg"""
+def aplicar_eq(y, sr, graves=0.0, medios=0.0, agudos=0.0):
+    """Equalizador 3 bandas direto no array numpy - sem I/O de arquivo"""
     try:
-        from scipy.signal import butter, sosfilt
         graves = float(graves); medios = float(medios); agudos = float(agudos)
         if graves == 0 and medios == 0 and agudos == 0:
-            return wav_in
+            return y
 
-        y, sr = librosa.load(wav_in, sr=None, mono=True)
+        nyq = sr / 2.0
 
-        def shelv_low(y, sr, gain_db, cutoff=300):
-            if gain_db == 0: return y
-            gain = 10 ** (gain_db / 20.0)
-            sos = butter(2, cutoff / (sr / 2), btype='low', output='sos')
+        # Graves: shelf abaixo de 300Hz
+        if graves != 0:
+            gain = 10 ** (graves / 20.0)
+            sos = butter(2, 300 / nyq, btype='low', output='sos')
             baixos = sosfilt(sos, y)
             altos  = y - baixos
-            return baixos * gain + altos
+            y = baixos * gain + altos
 
-        def shelv_high(y, sr, gain_db, cutoff=4000):
-            if gain_db == 0: return y
-            gain = 10 ** (gain_db / 20.0)
-            sos = butter(2, cutoff / (sr / 2), btype='high', output='sos')
-            agud = sosfilt(sos, y)
-            resto = y - agud
-            return agud * gain + resto
-
-        def band_boost(y, sr, gain_db, low=500, high=3000):
-            if gain_db == 0: return y
-            gain = 10 ** (gain_db / 20.0)
-            sos_l = butter(2, low  / (sr / 2), btype='high', output='sos')
-            sos_h = butter(2, high / (sr / 2), btype='low',  output='sos')
+        # Medios: banda 500-3000Hz
+        if medios != 0:
+            gain = 10 ** (medios / 20.0)
+            sos_l = butter(2, 500  / nyq, btype='high', output='sos')
+            sos_h = butter(2, 3000 / nyq, btype='low',  output='sos')
             band = sosfilt(sos_h, sosfilt(sos_l, y))
             resto = y - band
-            return band * gain + resto
+            y = band * gain + resto
 
-        y = shelv_low(y, sr, graves)
-        y = band_boost(y, sr, medios)
-        y = shelv_high(y, sr, agudos)
+        # Agudos: shelf acima de 4000Hz
+        if agudos != 0:
+            gain = 10 ** (agudos / 20.0)
+            sos = butter(2, 4000 / nyq, btype='high', output='sos')
+            agud  = sosfilt(sos, y)
+            resto = y - agud
+            y = agud * gain + resto
 
         # Normaliza pra evitar clipping
         pico = np.max(np.abs(y))
         if pico > 1.0:
             y = y / pico
 
-        wav_out = wav_in + '_eq.wav'
-        import soundfile as sf
-        sf.write(wav_out, y.astype(np.float32), sr)
-        return wav_out
+        return y.astype(np.float32)
     except Exception as e:
         print(f'[eq excecao] {e}')
-        return wav_in
+        return y
 
 def eliminar_ruido(y, sr, intensidade=0.5):
     try:
@@ -117,7 +106,7 @@ def eliminar_ruido(y, sr, intensidade=0.5):
         stft_y = librosa.stft(y, n_fft=n_fft, hop_length=hop)
         mag  = np.abs(stft_y); fase = np.angle(stft_y)
         fator = 1.0 + intensidade * 3.0
-        mag_limpa  = np.maximum(mag - perfil_ruido * fator, mag * 0.05)
+        mag_limpa = np.maximum(mag - perfil_ruido * fator, mag * 0.05)
         return librosa.istft(mag_limpa * np.exp(1j * fase), hop_length=hop, length=len(y)).astype(np.float32)
     except Exception as ex:
         print(f'[ruido erro] {ex}'); return y
@@ -179,15 +168,11 @@ def processar():
         if len(y) == 0:
             return jsonify({'erro': 'Audio sem conteudo.'}), 400
 
+        # Pipeline: ruido -> eq -> autotune
         if reducao_ruido > 0:
             y = eliminar_ruido(y, sr, intensidade=reducao_ruido)
 
-        if eq_graves != 0 or eq_medios != 0 or eq_agudos != 0:
-            tmp_eq = wav + '_eq.wav'; tmp_files.append(tmp_eq)
-            sf.write(tmp_eq, y, sr)
-            tmp_eq2 = aplicar_eq_ffmpeg(tmp_eq, eq_graves, eq_medios, eq_agudos)
-            if tmp_eq2 != tmp_eq: tmp_files.append(tmp_eq2)
-            y, _ = librosa.load(tmp_eq2, sr=44100, mono=True)
+        y = aplicar_eq(y, sr, eq_graves, eq_medios, eq_agudos)
 
         f0 = librosa.yin(y,
             fmin=float(librosa.note_to_hz('C2')),
@@ -207,7 +192,6 @@ def processar():
         fator = 10 ** (2.0 / 20.0)
         y = np.clip(y * fator, -1.0, 1.0).astype(np.float32)
 
-        # Salva WAV temporário e converte pra MP3
         wav_out = os.path.join(app.config['PROCESSED_FOLDER'], f'tmp_{uid}.wav')
         mp3_out = os.path.join(app.config['PROCESSED_FOLDER'], f'venenno_{uid}.mp3')
         tmp_files.append(wav_out)
