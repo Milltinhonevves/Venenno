@@ -364,6 +364,7 @@ def enviar():
     escala        = data.get('escala', 'maior')
     strength      = float(data.get('strength', 0.8))
     reducao_ruido = float(data.get('reducao_ruido', 0.0))
+    semitons_extra = float(data.get('semitons_extra', 0))
     eq_graves     = float(data.get('eq_graves', 0.0))
     eq_medios     = float(data.get('eq_medios', 0.0))
     eq_agudos     = float(data.get('eq_agudos', 0.0))
@@ -414,6 +415,8 @@ def enviar():
                 n_steps     = (midi_alvo - midi_atual) * strength
                 print(f'[enviar bg] pitch={pitch:.1f}Hz steps={n_steps:.3f}')
                 y = pitch_shift_melhor(y, sr_a, n_steps)
+            if semitons_extra != 0:
+                y = pitch_shift_melhor(y, sr_a, semitons_extra)
             fator = 10 ** (2.0 / 20.0)
             y = np.clip(y * fator, -1.0, 1.0).astype(np.float32)
             wav_out = os.path.join(app.config['PROCESSED_FOLDER'], f'tmp_{uid}.wav')
