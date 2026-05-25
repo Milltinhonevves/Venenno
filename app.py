@@ -1,4 +1,4 @@
-import os, uuid, subprocess, traceback, shutil
+import os, uuid, subprocess, traceback
 import numpy as np
 import librosa
 import soundfile as sf
@@ -34,16 +34,21 @@ def converter_wav(origem):
         raise RuntimeError('ffmpeg: ' + r.stderr.decode(errors='replace')[-300:])
     return dest
 
+def wav_para_mp3(wav_path, mp3_path):
+    r = subprocess.run(
+        [FFMPEG,'-y','-i',wav_path,'-codec:a','libmp3lame','-qscale:a','2',mp3_path],
+        capture_output=True, timeout=120
+    )
+    if r.returncode != 0:
+        raise RuntimeError('ffmpeg mp3: ' + r.stderr.decode(errors='replace')[-200:])
+
 def aplicar_eq_ffmpeg(wav_in, graves=0, medios=0, agudos=0):
     if graves == 0 and medios == 0 and agudos == 0:
         return wav_in
     filtros = []
-    if graves != 0:
-        filtros.append(f"equalizer=f=100:t=o:w=200:g={graves}")
-    if medios != 0:
-        filtros.append(f"equalizer=f=1000:t=o:w=500:g={medios}")
-    if agudos != 0:
-        filtros.append(f"equalizer=f=8000:t=o:w=3000:g={agudos}")
+    if graves != 0: filtros.append(f"equalizer=f=100:t=o:w=200:g={graves}")
+    if medios != 0: filtros.append(f"equalizer=f=1000:t=o:w=500:g={medios}")
+    if agudos != 0: filtros.append(f"equalizer=f=8000:t=o:w=3000:g={agudos}")
     wav_out = wav_in + '_eq.wav'
     r = subprocess.run(
         [FFMPEG,'-y','-i',wav_in,'-af',','.join(filtros),'-ar','44100','-ac','1',wav_out],
@@ -61,12 +66,10 @@ def eliminar_ruido(y, sr, intensidade=0.5):
         stft_ruido   = librosa.stft(y[:n_ruido], n_fft=n_fft, hop_length=hop)
         perfil_ruido = np.mean(np.abs(stft_ruido), axis=1, keepdims=True)
         stft_y = librosa.stft(y, n_fft=n_fft, hop_length=hop)
-        mag  = np.abs(stft_y)
-        fase = np.angle(stft_y)
+        mag  = np.abs(stft_y); fase = np.angle(stft_y)
         fator = 1.0 + intensidade * 3.0
         mag_limpa  = np.maximum(mag - perfil_ruido * fator, mag * 0.05)
-        stft_limpo = mag_limpa * np.exp(1j * fase)
-        return librosa.istft(stft_limpo, hop_length=hop, length=len(y)).astype(np.float32)
+        return librosa.istft(mag_limpa * np.exp(1j * fase), hop_length=hop, length=len(y)).astype(np.float32)
     except Exception as ex:
         print(f'[ruido erro] {ex}'); return y
 
@@ -83,10 +86,6 @@ def nota_mais_proxima(midi_val, escala_midi):
     return escala_midi[int(np.argmin(np.abs(arr - midi_val)))]
 
 def pitch_shift_melhor(y, sr, n_steps):
-    """
-    Tenta pyrubberband primeiro (qualidade profissional).
-    Fallback: librosa com bins_per_octave=96 (mais fino).
-    """
     if abs(n_steps) < 0.05:
         return y
     try:
@@ -95,10 +94,8 @@ def pitch_shift_melhor(y, sr, n_steps):
         print(f'[pyrubberband] steps={n_steps:.3f}')
         return result.astype(np.float32)
     except Exception as ex:
-        print(f'[pyrubberband erro] {ex} — usando librosa')
-        return librosa.effects.pitch_shift(
-            y, sr=sr, n_steps=n_steps, bins_per_octave=96
-        ).astype(np.float32)
+        print(f'[pyrubberband erro] {ex} — librosa fallback')
+        return librosa.effects.pitch_shift(y, sr=sr, n_steps=n_steps, bins_per_octave=96).astype(np.float32)
 
 @app.route('/')
 def index():
@@ -110,15 +107,15 @@ def processar():
         return jsonify({'erro': 'Nenhum arquivo enviado'}), 400
 
     arq           = request.files['audio']
-    tonica        = request.form.get('tonica',        'C')
-    escala        = request.form.get('escala',        'maior')
-    strength      = float(request.form.get('strength',      0.8))
+    tonica        = request.form.get('tonica', 'C')
+    escala        = request.form.get('escala', 'maior')
+    strength      = float(request.form.get('strength', 0.8))
     reducao_ruido = float(request.form.get('reducao_ruido', 0.0))
-    eq_graves     = float(request.form.get('eq_graves',     0.0))
-    eq_medios     = float(request.form.get('eq_medios',     0.0))
-    eq_agudos     = float(request.form.get('eq_agudos',     0.0))
+    eq_graves     = float(request.form.get('eq_graves', 0.0))
+    eq_medios     = float(request.form.get('eq_medios', 0.0))
+    eq_agudos     = float(request.form.get('eq_agudos', 0.0))
 
-    uid  = str(uuid.uuid4())
+    uid = str(uuid.uuid4())
     orig = os.path.join(app.config['UPLOAD_FOLDER'], uid)
     tmp_files = []
 
@@ -127,55 +124,49 @@ def processar():
         if os.path.getsize(orig) == 0:
             return jsonify({'erro': 'Arquivo vazio.'}), 400
 
-        # 1. Converte pra WAV 44100Hz PCM
         wav = converter_wav(orig); tmp_files.append(wav)
         y, sr = librosa.load(wav, sr=44100, mono=True)
         print(f'[proc] dur={len(y)/sr:.1f}s strength={strength}')
         if len(y) == 0:
             return jsonify({'erro': 'Audio sem conteudo.'}), 400
 
-        # 2. Elimina ruído
         if reducao_ruido > 0:
             y = eliminar_ruido(y, sr, intensidade=reducao_ruido)
 
-        # 3. EQ antes da afinação
         if eq_graves != 0 or eq_medios != 0 or eq_agudos != 0:
-            tmp_eq = wav + '_pre_eq.wav'; tmp_files.append(tmp_eq)
+            tmp_eq = wav + '_eq.wav'; tmp_files.append(tmp_eq)
             sf.write(tmp_eq, y, sr)
             tmp_eq2 = aplicar_eq_ffmpeg(tmp_eq, eq_graves, eq_medios, eq_agudos)
             if tmp_eq2 != tmp_eq: tmp_files.append(tmp_eq2)
             y, _ = librosa.load(tmp_eq2, sr=44100, mono=True)
 
-        # 4. Detecta pitch
         f0 = librosa.yin(y,
             fmin=float(librosa.note_to_hz('C2')),
             fmax=float(librosa.note_to_hz('C7')),
             sr=sr, frame_length=2048, hop_length=512)
         validos = f0[(f0 > 80) & (f0 < 1100) & ~np.isnan(f0)]
 
-        if len(validos) == 0:
-            print('[autotune] sem pitch detectado')
-            nome = f'venenno_{uid}.wav'
-            sf.write(os.path.join(app.config['PROCESSED_FOLDER'], nome), y, sr)
-            return jsonify({'sucesso': True, 'url': f'/download/{nome}'})
+        if len(validos) > 0:
+            pitch = float(np.median(validos))
+            escala_midi = gerar_escala(tonica, escala)
+            midi_atual  = freq_para_midi(pitch)
+            midi_alvo   = nota_mais_proxima(midi_atual, escala_midi)
+            n_steps     = (midi_alvo - midi_atual) * strength
+            print(f'[autotune] pitch={pitch:.1f}Hz steps={n_steps:.3f}')
+            y = pitch_shift_melhor(y, sr, n_steps)
 
-        pitch       = float(np.median(validos))
-        escala_midi = gerar_escala(tonica, escala)
-        midi_atual  = freq_para_midi(pitch)
-        midi_alvo   = nota_mais_proxima(midi_atual, escala_midi)
-        n_steps     = (midi_alvo - midi_atual) * strength
-        print(f'[autotune] pitch={pitch:.1f}Hz midi={midi_atual:.2f} alvo={midi_alvo:.2f} steps={n_steps:.3f}')
-
-        # 5. Pitch shift de alta qualidade
-        y_final = pitch_shift_melhor(y, sr, n_steps)
-
-        # 6. Ganho leve +2dB
         fator = 10 ** (2.0 / 20.0)
-        y_final = np.clip(y_final * fator, -1.0, 1.0).astype(np.float32)
+        y = np.clip(y * fator, -1.0, 1.0).astype(np.float32)
 
-        nome = f'venenno_{uid}.wav'
-        sf.write(os.path.join(app.config['PROCESSED_FOLDER'], nome), y_final, sr)
-        return jsonify({'sucesso': True, 'url': f'/download/{nome}'})
+        # Salva WAV temporário e converte pra MP3
+        wav_out = os.path.join(app.config['PROCESSED_FOLDER'], f'tmp_{uid}.wav')
+        mp3_out = os.path.join(app.config['PROCESSED_FOLDER'], f'venenno_{uid}.mp3')
+        tmp_files.append(wav_out)
+
+        sf.write(wav_out, y, sr)
+        wav_para_mp3(wav_out, mp3_out)
+
+        return jsonify({'sucesso': True, 'url': f'/download/venenno_{uid}.mp3'})
 
     except Exception as e:
         print('ERRO:', traceback.format_exc())
