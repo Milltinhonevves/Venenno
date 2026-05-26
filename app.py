@@ -467,13 +467,13 @@ def enviar():
             y = aplicar_eq(y, eq_graves, eq_medios, eq_agudos)
             y = autotune(y, tonica, escala, strength)
 
-        reverb_int   = float(data.get('reverb', 0.0))
-        chorus_int   = float(data.get('chorus', 0.0))
-        compressor   = int(data.get('compressor', 0))
+            reverb_int    = float(data.get('reverb', 0.0))
+            chorus_int    = float(data.get('chorus', 0.0))
+            compressor_on = int(data.get('compressor', 0))
 
-        if reverb_int  > 0.01: y = aplicar_reverb(y, reverb_int)
-        if chorus_int  > 0.01: y = aplicar_chorus(y, chorus_int)
-        if compressor  == 1:   y = aplicar_compressor(y)
+            if reverb_int    > 0.01: y = aplicar_reverb(y, reverb_int)
+            if chorus_int    > 0.01: y = aplicar_chorus(y, chorus_int)
+            if compressor_on == 1:   y = aplicar_compressor(y)
 
             # Semitons extra (manual)
             if semitons_extra != 0:
