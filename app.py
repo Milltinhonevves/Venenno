@@ -424,6 +424,9 @@ def enviar():
     eq_medios     = float(dados.get('eq_medios', 0.0))
     eq_agudos     = float(dados.get('eq_agudos', 0.0))
     semitons_extra= int(dados.get('semitons_extra', 0))
+    reverb_int    = float(dados.get('reverb', 0.0))
+    chorus_int    = float(dados.get('chorus', 0.0))
+    compressor_on = int(dados.get('compressor', 0))
 
     if not audio_b64:
         return jsonify({'erro': 'audio_b64 vazio'}), 400
@@ -466,10 +469,6 @@ def enviar():
                 y = eliminar_ruido(y, reducao_ruido)
             y = aplicar_eq(y, eq_graves, eq_medios, eq_agudos)
             y = autotune(y, tonica, escala, strength)
-
-            reverb_int    = float(data.get('reverb', 0.0))
-            chorus_int    = float(data.get('chorus', 0.0))
-            compressor_on = int(data.get('compressor', 0))
 
             if reverb_int    > 0.01: y = aplicar_reverb(y, reverb_int)
             if chorus_int    > 0.01: y = aplicar_chorus(y, chorus_int)
