@@ -171,29 +171,54 @@ def pitch_shift_scipy(seg, n_steps):
     return restored
 
 def autotune(y, tonica, escala, strength=0.8):
-    """Autotune frame a frame: chunks de 1s, yin proprio, scipy resample."""
-    escala_midi = gerar_escala(tonica, escala)
-    chunk_size  = SR   # 1 segundo
-    n_chunks    = max(1, int(np.ceil(len(y) / chunk_size)))
-    print(f'[autotune] {n_chunks} chunks')
-    out = []
+    """
+    Autotune melhorado:
+    - Chunks de 0.25s (mais preciso que 1s)
+    - Crossfade entre chunks pra eliminar cliques
+    - Suavizacao do pitch alvo entre frames consecutivos
+    """
+    escala_midi  = gerar_escala(tonica, escala)
+    chunk_size   = SR // 4        # 0.25s — mais granular
+    fade_size    = min(128, chunk_size // 4)
+    n_chunks     = max(1, int(np.ceil(len(y) / chunk_size)))
+    print(f'[autotune] {n_chunks} chunks de 0.25s')
+
+    out          = np.zeros(len(y), dtype=np.float32)
+    ultimo_steps = 0.0            # suavizacao entre frames
 
     for i in range(n_chunks):
         start = i * chunk_size
         end   = min(start + chunk_size, len(y))
         seg   = y[start:end].copy()
+        if len(seg) < 64:
+            out[start:end] += seg
+            continue
 
         freq = yin_simples(seg)
         if freq > 60:
             m_atual = freq_para_midi(freq)
             m_alvo  = nota_mais_proxima(m_atual, escala_midi)
-            n_steps = (m_alvo - m_atual) * strength
-            print(f'[autotune] chunk={i} freq={freq:.1f}Hz steps={n_steps:.2f}')
+            n_steps_alvo = (m_alvo - m_atual) * float(strength)
+            # Suaviza transicao entre chunks (evita saltos bruscos)
+            n_steps = ultimo_steps * 0.3 + n_steps_alvo * 0.7
+            ultimo_steps = n_steps
             if abs(n_steps) > 0.05:
                 seg = pitch_shift_scipy(seg, n_steps)
-        out.append(seg)
+        else:
+            ultimo_steps = ultimo_steps * 0.5  # decai suavemente
 
-    return np.concatenate(out).astype(np.float32)
+        # Crossfade com o chunk anterior
+        if i > 0 and fade_size > 0 and start >= fade_size:
+            fade_in  = np.linspace(0.0, 1.0, fade_size, dtype=np.float32)
+            fade_out = 1.0 - fade_in
+            seg_fade = seg[:min(fade_size, len(seg))]
+            out[start:start+len(seg_fade)] *= fade_out[:len(seg_fade)]
+            out[start:start+len(seg_fade)] += seg_fade * fade_in[:len(seg_fade)]
+            out[start+len(seg_fade):end]    = seg[len(seg_fade):]
+        else:
+            out[start:end] = seg
+
+    return np.clip(out, -1.0, 1.0).astype(np.float32)
 
 # ── Ruído ───────────────────────────────────────────────────────────────────
 def eliminar_ruido(y, intensidade=0.5):
@@ -241,6 +266,50 @@ def eliminar_ruido(y, intensidade=0.5):
     contagem = np.where(contagem < 1e-6, 1.0, contagem)
     saida = saida / contagem
     return np.clip(saida, -1.0, 1.0).astype(np.float32)
+
+
+# ── Mesa de Som ─────────────────────────────────────────────────────────────
+def aplicar_reverb(y, intensidade=0.3):
+    """Reverb simples via convolucao com decaimento exponencial."""
+    if intensidade < 0.01:
+        return y
+    dur_reverb = int(SR * 0.8 * intensidade)   # ate 0.8s de cauda
+    t          = np.linspace(0, 1, dur_reverb, dtype=np.float32)
+    ir         = np.exp(-6.0 * t) * np.random.randn(dur_reverb).astype(np.float32)
+    ir        /= (np.max(np.abs(ir)) + 1e-8)
+    from scipy.signal import fftconvolve
+    wet  = fftconvolve(y, ir)[:len(y)].astype(np.float32)
+    mix  = float(intensidade) * 0.5
+    return np.clip(y * (1 - mix) + wet * mix, -1.0, 1.0).astype(np.float32)
+
+def aplicar_compressor(y, threshold_db=-18.0, ratio=4.0, makeup_db=6.0):
+    """Compressor dinamico simples — controla picos e sobe volume geral."""
+    threshold = 10 ** (float(threshold_db) / 20.0)
+    makeup    = 10 ** (float(makeup_db) / 20.0)
+    saida     = y.copy()
+    acima     = np.abs(saida) > threshold
+    saida[acima] = np.sign(saida[acima]) * (
+        threshold + (np.abs(saida[acima]) - threshold) / float(ratio)
+    )
+    return np.clip(saida * makeup, -1.0, 1.0).astype(np.float32)
+
+def aplicar_chorus(y, intensidade=0.4):
+    """Chorus: mistura o sinal com versao levemente atrasada e modulada."""
+    if intensidade < 0.01:
+        return y
+    delay_ms  = 25
+    delay_s   = int(SR * delay_ms / 1000)
+    modulacao = int(SR * 0.010)   # 10ms de variacao
+    t         = np.arange(len(y), dtype=np.float32)
+    lfo       = (np.sin(2 * np.pi * 1.5 * t / SR) * modulacao).astype(int)
+    wet       = np.zeros_like(y)
+    for i in range(delay_s, len(y)):
+        offset = delay_s + max(0, min(modulacao, lfo[i]))
+        src    = i - offset
+        if 0 <= src < len(y):
+            wet[i] = y[src]
+    mix = float(intensidade) * 0.5
+    return np.clip(y * (1 - mix) + wet * mix, -1.0, 1.0).astype(np.float32)
 
 # ── Rotas Flask ─────────────────────────────────────────────────────────────
 @app.route('/')
@@ -292,6 +361,14 @@ def processar():
 
         y = aplicar_eq(y, eq_graves, eq_medios, eq_agudos)
         y = autotune(y, tonica, escala, strength)
+
+        reverb_int   = float(data.get('reverb', 0.0))
+        chorus_int   = float(data.get('chorus', 0.0))
+        compressor   = int(data.get('compressor', 0))
+
+        if reverb_int  > 0.01: y = aplicar_reverb(y, reverb_int)
+        if chorus_int  > 0.01: y = aplicar_chorus(y, chorus_int)
+        if compressor  == 1:   y = aplicar_compressor(y)
 
         # Normaliza volume
         fator = 10 ** (6.0 / 20.0)
@@ -389,6 +466,14 @@ def enviar():
                 y = eliminar_ruido(y, reducao_ruido)
             y = aplicar_eq(y, eq_graves, eq_medios, eq_agudos)
             y = autotune(y, tonica, escala, strength)
+
+        reverb_int   = float(data.get('reverb', 0.0))
+        chorus_int   = float(data.get('chorus', 0.0))
+        compressor   = int(data.get('compressor', 0))
+
+        if reverb_int  > 0.01: y = aplicar_reverb(y, reverb_int)
+        if chorus_int  > 0.01: y = aplicar_chorus(y, chorus_int)
+        if compressor  == 1:   y = aplicar_compressor(y)
 
             # Semitons extra (manual)
             if semitons_extra != 0:
