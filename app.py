@@ -329,6 +329,10 @@ def processar():
     eq_graves     = float(request.form.get('eq_graves', 0.0))
     eq_medios     = float(request.form.get('eq_medios', 0.0))
     eq_agudos     = float(request.form.get('eq_agudos', 0.0))
+    reverb_int    = float(request.form.get('reverb', 0.0))
+    chorus_int    = float(request.form.get('chorus', 0.0))
+    compressor_on = int(request.form.get('compressor', 0))
+    semitons_extra= int(request.form.get('semitons_extra', 0))
 
     uid       = str(uuid.uuid4())
     nome_orig = arq.filename or ''
@@ -362,13 +366,9 @@ def processar():
         y = aplicar_eq(y, eq_graves, eq_medios, eq_agudos)
         y = autotune(y, tonica, escala, strength)
 
-        reverb_int   = float(data.get('reverb', 0.0))
-        chorus_int   = float(data.get('chorus', 0.0))
-        compressor   = int(data.get('compressor', 0))
-
-        if reverb_int  > 0.01: y = aplicar_reverb(y, reverb_int)
-        if chorus_int  > 0.01: y = aplicar_chorus(y, chorus_int)
-        if compressor  == 1:   y = aplicar_compressor(y)
+        if reverb_int    > 0.01: y = aplicar_reverb(y, reverb_int)
+        if chorus_int    > 0.01: y = aplicar_chorus(y, chorus_int)
+        if compressor_on == 1:   y = aplicar_compressor(y)
 
         # Normaliza volume
         fator = 10 ** (6.0 / 20.0)
