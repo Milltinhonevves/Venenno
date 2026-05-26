@@ -311,6 +311,62 @@ def aplicar_chorus(y, intensidade=0.4):
     mix = float(intensidade) * 0.5
     return np.clip(y * (1 - mix) + wet * mix, -1.0, 1.0).astype(np.float32)
 
+
+# ── De-esser ────────────────────────────────────────────────────────────────
+def aplicar_deesser(y, intensidade=0.5):
+    """
+    De-esser: atenua sibilantes (4kHz-10kHz) que causam chiado no 'S'.
+    Detecta frames com energia alta nessa faixa e aplica ganho reduzido.
+    """
+    if intensidade < 0.01:
+        return y
+    frame_size = 512
+    hop        = 256
+    freq_bins  = np.fft.rfftfreq(frame_size, d=1.0/SR)
+    ess_mask   = (freq_bins >= 4000) & (freq_bins <= 10000)
+
+    saida    = np.zeros(len(y), dtype=np.float32)
+    contagem = np.zeros(len(y), dtype=np.float32)
+    janela   = np.hanning(frame_size).astype(np.float32)
+
+    i = 0
+    while i + frame_size <= len(y):
+        frame = y[i:i+frame_size] * janela
+        spec  = np.fft.rfft(frame)
+        mag   = np.abs(spec)
+        fase  = np.angle(spec)
+
+        energia_ess  = np.mean(mag[ess_mask] ** 2)
+        energia_total= np.mean(mag ** 2) + 1e-10
+        ratio_ess    = energia_ess / energia_total
+
+        # Se a faixa sibilante domina, atenua
+        if ratio_ess > 0.3:
+            reducao = 1.0 - (intensidade * min(1.0, ratio_ess * 2))
+            mag[ess_mask] *= max(0.05, reducao)
+
+        spec_out  = mag * np.exp(1j * fase)
+        frame_out = np.fft.irfft(spec_out).astype(np.float32)
+        saida[i:i+frame_size]    += frame_out * janela
+        contagem[i:i+frame_size] += janela ** 2
+        i += hop
+
+    contagem = np.where(contagem < 1e-6, 1.0, contagem)
+    return np.clip(saida / contagem, -1.0, 1.0).astype(np.float32)
+
+# ── Saturação ────────────────────────────────────────────────────────────────
+def aplicar_saturacao(y, intensidade=0.4):
+    """
+    Saturacao harmonica: adiciona calor analogico via soft-clip (tanh).
+    Gera harmonicos pares que enriquecem o timbre vocal.
+    """
+    if intensidade < 0.01:
+        return y
+    drive = 1.0 + float(intensidade) * 8.0   # 1x a 9x de gain
+    wet   = np.tanh(y * drive) / np.tanh(drive)
+    mix   = float(intensidade) * 0.6
+    return np.clip(y * (1 - mix) + wet * mix, -1.0, 1.0).astype(np.float32)
+
 # ── Rotas Flask ─────────────────────────────────────────────────────────────
 @app.route('/')
 def index():
@@ -333,6 +389,9 @@ def processar():
     chorus_int    = float(request.form.get('chorus', 0.0))
     compressor_on = int(request.form.get('compressor', 0))
     semitons_extra= int(request.form.get('semitons_extra', 0))
+    deesser_int   = float(request.form.get('deesser', 0.0))
+    saturacao_int = float(request.form.get('saturacao', 0.0))
+    export_wav    = request.form.get('export_wav', '0') == '1'
 
     uid       = str(uuid.uuid4())
     nome_orig = arq.filename or ''
@@ -369,6 +428,8 @@ def processar():
         if reverb_int    > 0.01: y = aplicar_reverb(y, reverb_int)
         if chorus_int    > 0.01: y = aplicar_chorus(y, chorus_int)
         if compressor_on == 1:   y = aplicar_compressor(y)
+        if deesser_int   > 0.01: y = aplicar_deesser(y, deesser_int)
+        if saturacao_int > 0.01: y = aplicar_saturacao(y, saturacao_int)
 
         # Normaliza volume
         fator = 10 ** (6.0 / 20.0)
@@ -383,6 +444,10 @@ def processar():
 
         with open(mp3_out, 'rb') as f:
             audio_b64 = base64.b64encode(f.read()).decode('utf-8')
+        if export_wav:
+            with open(wav_out, 'rb') as fw:
+                wav_b64 = base64.b64encode(fw.read()).decode('utf-8')
+            return jsonify({'sucesso': True, 'audio_b64': audio_b64, 'wav_b64': wav_b64, 'formato': 'wav'})
         return jsonify({'sucesso': True, 'audio_b64': audio_b64})
 
     except Exception as e:
@@ -427,6 +492,9 @@ def enviar():
     reverb_int    = float(dados.get('reverb', 0.0))
     chorus_int    = float(dados.get('chorus', 0.0))
     compressor_on = int(dados.get('compressor', 0))
+    deesser_int   = float(dados.get('deesser', 0.0))
+    saturacao_int = float(dados.get('saturacao', 0.0))
+    export_wav    = dados.get('export_wav', False)
 
     if not audio_b64:
         return jsonify({'erro': 'audio_b64 vazio'}), 400
@@ -473,6 +541,8 @@ def enviar():
             if reverb_int    > 0.01: y = aplicar_reverb(y, reverb_int)
             if chorus_int    > 0.01: y = aplicar_chorus(y, chorus_int)
             if compressor_on == 1:   y = aplicar_compressor(y)
+            if deesser_int   > 0.01: y = aplicar_deesser(y, deesser_int)
+            if saturacao_int > 0.01: y = aplicar_saturacao(y, saturacao_int)
 
             # Semitons extra (manual)
             if semitons_extra != 0:
