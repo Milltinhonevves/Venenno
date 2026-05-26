@@ -106,6 +106,30 @@
     </div>
   </div>
 
+
+  <!-- MESA DE SOM -->
+  <div class="card">
+    <h2>🎛️ Mesa de Som</h2>
+    <div class="slider-group">
+      <div class="slider-header"><span>🏛️ REVERB</span><span id="reverb-val">0%</span></div>
+      <input type="range" id="reverb" min="0" max="1" step="0.05" value="0"
+        oninput="document.getElementById('reverb-val').textContent=Math.round(this.value*100)+'%'">
+    </div>
+    <div class="slider-group">
+      <div class="slider-header"><span>🌊 CHORUS</span><span id="chorus-val">0%</span></div>
+      <input type="range" id="chorus" min="0" max="1" step="0.05" value="0"
+        oninput="document.getElementById('chorus-val').textContent=Math.round(this.value*100)+'%'">
+    </div>
+    <div class="slider-group" style="display:flex;align-items:center;gap:14px;margin-top:8px;">
+      <span style="color:var(--text-muted);font-size:0.78rem;letter-spacing:.07em;">🗜️ COMPRESSOR</span>
+      <label class="toggle-switch">
+        <input type="checkbox" id="compressor">
+        <span class="toggle-slider"></span>
+      </label>
+      <span id="comp-val" style="color:var(--accent);font-size:0.85rem;">OFF</span>
+    </div>
+  </div>
+
   <!-- CONTROLE DE SEMITONS -->
   <div class="semitom-control">
     <span class="semitom-label">🎵 Semitons</span>
@@ -142,6 +166,10 @@
 
 <footer>🐍 VENENNO — por Miltinho Neves</footer>
 
-<script src="/static/js/main.js?v=1779741423"></script>
+<script src="/static/js/main.js?v=1779741423">
+  document.getElementById('compressor').addEventListener('change', function() {
+    document.getElementById('comp-val').textContent = this.checked ? 'ON' : 'OFF';
+  });
+</script>
 </body>
 </html>
