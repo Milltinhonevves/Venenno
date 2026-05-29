@@ -1,21 +1,21 @@
 {
   "name": "Venenno",
   "short_name": "Venenno",
+  "description": "Est\u00fadio vocal com autotune e efeitos profissionais",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#0a0a0a",
   "theme_color": "#00ff88",
   "icons": [
     {
-      "src": "/static/icon.png",
+      "src": "/static/icon192.png",
       "sizes": "192x192",
       "type": "image/png"
     },
     {
-      "src": "/static/icon.png",
+      "src": "/static/icon512.png",
       "sizes": "512x512",
       "type": "image/png"
     }
-  ],
-  "version": "10"
+  ]
 }
