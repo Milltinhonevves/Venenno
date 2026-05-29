@@ -172,53 +172,65 @@ def pitch_shift_scipy(seg, n_steps):
 
 def autotune(y, tonica, escala, strength=0.8):
     """
-    Autotune melhorado:
-    - Chunks de 0.25s (mais preciso que 1s)
-    - Crossfade entre chunks pra eliminar cliques
-    - Suavizacao do pitch alvo entre frames consecutivos
+    Autotune com overlap-add verdadeiro:
+    - Janelas de 0.25s com 50% de sobreposicao
+    - Crossfade por janela Hanning elimina cliques/granulados
+    - Suavizacao de pitch entre frames consecutivos
     """
     escala_midi  = gerar_escala(tonica, escala)
-    chunk_size   = SR // 4        # 0.25s — mais granular
-    fade_size    = min(128, chunk_size // 4)
-    n_chunks     = max(1, int(np.ceil(len(y) / chunk_size)))
-    print(f'[autotune] {n_chunks} chunks de 0.25s')
+    chunk_size   = SR // 4          # 0.25s
+    hop_size     = chunk_size // 2  # 50% overlap
+    janela       = np.hanning(chunk_size).astype(np.float32)
 
-    out          = np.zeros(len(y), dtype=np.float32)
-    ultimo_steps = 0.0            # suavizacao entre frames
+    # Normaliza a janela para overlap-add correto
+    norm = np.zeros(len(y) + chunk_size, dtype=np.float32)
+    for i in range(0, len(y), hop_size):
+        end = min(i + chunk_size, len(norm))
+        sz  = min(chunk_size, end - i)
+        norm[i:i+sz] += janela[:sz] ** 2
+    norm = np.where(norm < 1e-6, 1.0, norm)
+
+    out          = np.zeros(len(y) + chunk_size, dtype=np.float32)
+    ultimo_steps = 0.0
+    n_chunks     = max(1, int(np.ceil(len(y) / hop_size)))
+    print(f'[autotune] {n_chunks} frames overlap-add')
 
     for i in range(n_chunks):
-        start = i * chunk_size
+        start = i * hop_size
         end   = min(start + chunk_size, len(y))
         seg   = y[start:end].copy()
-        if len(seg) < 64:
-            out[start:end] += seg
+        sz    = len(seg)
+        if sz < 64:
+            out[start:start+sz] += seg * janela[:sz]
             continue
+
+        # Pad se necessario
+        if sz < chunk_size:
+            seg = np.pad(seg, (0, chunk_size - sz))
 
         freq = yin_simples(seg)
         if freq > 60:
-            m_atual = freq_para_midi(freq)
-            m_alvo  = nota_mais_proxima(m_atual, escala_midi)
+            m_atual      = freq_para_midi(freq)
+            m_alvo       = nota_mais_proxima(m_atual, escala_midi)
             n_steps_alvo = (m_alvo - m_atual) * float(strength)
-            # Suaviza transicao entre chunks (evita saltos bruscos)
-            n_steps = ultimo_steps * 0.3 + n_steps_alvo * 0.7
+            # Suaviza entre frames
+            n_steps      = ultimo_steps * 0.25 + n_steps_alvo * 0.75
             ultimo_steps = n_steps
             if abs(n_steps) > 0.05:
                 seg = pitch_shift_scipy(seg, n_steps)
         else:
-            ultimo_steps = ultimo_steps * 0.5  # decai suavemente
+            ultimo_steps *= 0.4
 
-        # Crossfade com o chunk anterior
-        if i > 0 and fade_size > 0 and start >= fade_size:
-            fade_in  = np.linspace(0.0, 1.0, fade_size, dtype=np.float32)
-            fade_out = 1.0 - fade_in
-            seg_fade = seg[:min(fade_size, len(seg))]
-            out[start:start+len(seg_fade)] *= fade_out[:len(seg_fade)]
-            out[start:start+len(seg_fade)] += seg_fade * fade_in[:len(seg_fade)]
-            out[start+len(seg_fade):end]    = seg[len(seg_fade):]
-        else:
-            out[start:end] = seg
+        # Aplica janela e acumula via overlap-add
+        seg_jan = seg[:chunk_size] * janela
+        out_end = min(start + chunk_size, len(out))
+        seg_end = out_end - start
+        out[start:out_end] += seg_jan[:seg_end]
 
-    return np.clip(out, -1.0, 1.0).astype(np.float32)
+    # Normaliza e recorta
+    resultado = out[:len(y)] / norm[:len(y)]
+    return np.clip(resultado, -1.0, 1.0).astype(np.float32)
+
 
 # ── Ruído ───────────────────────────────────────────────────────────────────
 def eliminar_ruido(y, intensidade=0.5):
